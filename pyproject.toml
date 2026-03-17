@@ -4,10 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codexlens-search"
-version = "0.2.0"
-description = "Lightweight semantic code search engine — 2-stage vector + FTS + RRF fusion"
+version = "0.3.0"
+description = "Lightweight semantic code search engine — 2-stage vector + FTS + RRF fusion + MCP server"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "hnswlib>=0.8.0",
+    "numpy>=1.26",
+    "fastembed>=0.4.0,<2.0",
+    "httpx>=0.25",
+]
 license = {text = "MIT"}
 readme = "README.md"
 authors = [
@@ -30,10 +35,8 @@ Homepage = "https://github.com/catlog22/codexlens-search"
 Repository = "https://github.com/catlog22/codexlens-search"
 
 [project.optional-dependencies]
-semantic = [
-    "hnswlib>=0.8.0",
-    "numpy>=1.26",
-    "fastembed>=0.4.0,<2.0",
+mcp = [
+    "mcp[cli]>=1.0.0",
 ]
 gpu = [
     "onnxruntime-gpu>=1.16",
@@ -44,24 +47,8 @@ faiss-cpu = [
 faiss-gpu = [
     "faiss-gpu>=1.7.4",
 ]
-embed-api = [
-    "httpx>=0.25",
-]
-reranker-api = [
-    "httpx>=0.25",
-]
-mcp = [
-    "mcp[cli]>=1.0.0",
-    "codexlens-search[semantic,embed-api,reranker-api]",
-]
 watcher = [
     "watchdog>=3.0",
-]
-semantic-gpu = [
-    "hnswlib>=0.8.0",
-    "numpy>=1.26",
-    "fastembed>=0.4.0,<2.0",
-    "onnxruntime-gpu>=1.16",
 ]
 dev = [
     "pytest>=7.0",

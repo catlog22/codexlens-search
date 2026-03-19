@@ -31,13 +31,13 @@ That's it. Claude Code will auto-discover the tools: `index_project` → `search
 
 ```bash
 # Standard install (includes vector search + API clients)
-pip install codexlens-search
+uv pip install codexlens-search
 
 # With MCP server for Claude Code
-pip install codexlens-search[mcp]
+uv pip install codexlens-search[mcp]
 ```
 
-Optional extras for advanced use:
+Optional extras:
 
 | Extra | Description |
 |-------|-------------|
@@ -123,7 +123,7 @@ Format: `url|key|model,url|key|model,...`
 ### Local Models (Offline, No API)
 
 ```bash
-pip install codexlens-search[mcp]
+uv pip install codexlens-search[mcp]
 codexlens-search download-models
 ```
 
@@ -195,6 +195,8 @@ codexlens-search download-models
 | `CODEXLENS_FTS_TOP_K` | `50` | FTS results per method |
 | `CODEXLENS_FUSION_K` | `60` | RRF fusion k parameter |
 | `CODEXLENS_RERANKER_TOP_K` | `20` | Results to rerank |
+| `CODEXLENS_EMBED_BATCH_SIZE` | `32` | Max texts per API batch (auto-splits on 413) |
+| `CODEXLENS_EMBED_MAX_TOKENS` | `8192` | Max tokens per text (truncate if exceeded, 0=no limit) |
 | `CODEXLENS_INDEX_WORKERS` | `2` | Parallel indexing workers |
 | `CODEXLENS_MAX_FILE_SIZE` | `1000000` | Max file size in bytes |
 
@@ -215,7 +217,7 @@ Query → [Embedder] → query vector
 ```bash
 git clone https://github.com/catlog22/codexlens-search.git
 cd codexlens-search
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 pytest
 ```
 

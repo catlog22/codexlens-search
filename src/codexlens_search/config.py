@@ -10,7 +10,7 @@ class Config:
     # Embedding
     embed_model: str = "BAAI/bge-small-en-v1.5"
     embed_dim: int = 384
-    embed_batch_size: int = 64
+    embed_batch_size: int = 32
 
     # API embedding (optional — overrides local fastembed when set)
     embed_api_url: str = ""  # e.g. "https://api.openai.com/v1"
@@ -19,7 +19,8 @@ class Config:
     # Multi-endpoint: list of {"url": "...", "key": "...", "model": "..."} dicts
     embed_api_endpoints: list[dict[str, str]] = None  # type: ignore[assignment]
     embed_api_concurrency: int = 4
-    embed_api_max_tokens_per_batch: int = 8192
+    embed_api_max_tokens_per_batch: int = 32768
+    embed_max_tokens: int = 8192  # max tokens per single text (0 = no limit)
 
     # Model download / cache
     model_cache_dir: str = ""  # empty = fastembed default cache

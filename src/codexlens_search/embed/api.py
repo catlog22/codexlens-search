@@ -95,6 +95,16 @@ class APIEmbedder(BaseEmbedder):
         """Rough token estimate: ~4 chars per token for code."""
         return max(1, len(text) // 4)
 
+    def _truncate_text(self, text: str) -> str:
+        """Truncate text to embed_max_tokens if configured."""
+        max_tokens = self._config.embed_max_tokens
+        if max_tokens <= 0:
+            return text
+        max_chars = max_tokens * 4  # inverse of _estimate_tokens
+        if len(text) > max_chars:
+            return text[:max_chars]
+        return text
+
     def _pack_batches(
         self, texts: list[str]
     ) -> list[list[tuple[int, str]]]:
@@ -189,13 +199,34 @@ class APIEmbedder(BaseEmbedder):
     # -- Public interface ---------------------------------------------
 
     def embed_single(self, text: str) -> np.ndarray:
+        text = self._truncate_text(text)
         endpoint = self._next_endpoint()
         vecs = self._call_api([text], endpoint)
         return vecs[0]
 
+    def _call_api_with_split(
+        self,
+        texts: list[str],
+        endpoint: "_Endpoint",
+    ) -> list[np.ndarray]:
+        """Call API with automatic batch splitting on 413 errors."""
+        try:
+            return self._call_api(texts, endpoint)
+        except Exception as exc:
+            if "413" in str(exc) and len(texts) > 1:
+                mid = len(texts) // 2
+                logger.info("413 received, splitting batch %d → %d + %d", len(texts), mid, len(texts) - mid)
+                left = self._call_api_with_split(texts[:mid], endpoint)
+                right = self._call_api_with_split(texts[mid:], endpoint)
+                return left + right
+            raise
+
     def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
         if not texts:
             return []
+
+        # 0. Truncate texts exceeding model context
+        texts = [self._truncate_text(t) for t in texts]
 
         # 1. Pack into token-aware batches
         packed = self._pack_batches(texts)
@@ -205,7 +236,7 @@ class APIEmbedder(BaseEmbedder):
             batch_texts = [t for _, t in packed[0]]
             batch_indices = [i for i, _ in packed[0]]
             endpoint = self._next_endpoint()
-            vecs = self._call_api(batch_texts, endpoint)
+            vecs = self._call_api_with_split(batch_texts, endpoint)
             results: dict[int, np.ndarray] = {}
             for idx, vec in zip(batch_indices, vecs):
                 results[idx] = vec
@@ -220,7 +251,7 @@ class APIEmbedder(BaseEmbedder):
             batch_texts = [t for _, t in batch]
             batch_indices = [i for i, _ in batch]
             endpoint = self._next_endpoint()
-            future = self._executor.submit(self._call_api, batch_texts, endpoint)
+            future = self._executor.submit(self._call_api_with_split, batch_texts, endpoint)
             futures.append(future)
             batch_index_map.append(batch_indices)
 

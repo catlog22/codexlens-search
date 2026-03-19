@@ -58,11 +58,12 @@ Tuning:     CODEXLENS_BINARY_TOP_K, _ANN_TOP_K, _FTS_TOP_K, _FUSION_K,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from codexlens_search.bridge import (
     DEFAULT_EXCLUDES,
@@ -139,8 +140,9 @@ def search_code(project_path: str, query: str, top_k: int = 10) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def index_project(
-    project_path: str, glob_pattern: str = "**/*", force: bool = False
+async def index_project(
+    project_path: str, glob_pattern: str = "**/*", force: bool = False,
+    ctx: Context | None = None,
 ) -> str:
     """Build or rebuild the search index for a project.
 
@@ -167,7 +169,27 @@ def index_project(
         if p.is_file() and not should_exclude(p.relative_to(root), DEFAULT_EXCLUDES)
     ]
 
-    stats = indexing.sync(file_paths, root=root)
+    if ctx:
+        await ctx.report_progress(0, len(file_paths), f"Scanning {len(file_paths)} files...")
+
+    # Progress callback bridging sync pipeline → async MCP context
+    loop = asyncio.get_event_loop()
+
+    def _progress(done: int, total: int) -> None:
+        if ctx:
+            asyncio.run_coroutine_threadsafe(
+                ctx.report_progress(done, total, f"Indexed {done}/{total} files"),
+                loop,
+            )
+
+    stats = indexing.sync(file_paths, root=root, progress_callback=_progress)
+
+    if ctx:
+        await ctx.report_progress(
+            stats.files_processed, stats.files_processed,
+            f"Done: {stats.files_processed} files, {stats.chunks_created} chunks"
+        )
+
     return (
         f"Indexed {stats.files_processed} files, "
         f"{stats.chunks_created} chunks in {stats.duration_seconds:.1f}s. "
@@ -208,7 +230,10 @@ def index_status(project_path: str) -> str:
 
 
 @mcp.tool()
-def index_update(project_path: str, glob_pattern: str = "**/*") -> str:
+async def index_update(
+    project_path: str, glob_pattern: str = "**/*",
+    ctx: Context | None = None,
+) -> str:
     """Incrementally sync the index with current project files.
 
     Only re-indexes files that changed since last indexing.
@@ -231,7 +256,19 @@ def index_update(project_path: str, glob_pattern: str = "**/*") -> str:
         if p.is_file() and not should_exclude(p.relative_to(root), DEFAULT_EXCLUDES)
     ]
 
-    stats = indexing.sync(file_paths, root=root)
+    if ctx:
+        await ctx.report_progress(0, len(file_paths), f"Scanning {len(file_paths)} files...")
+
+    loop = asyncio.get_event_loop()
+
+    def _progress(done: int, total: int) -> None:
+        if ctx:
+            asyncio.run_coroutine_threadsafe(
+                ctx.report_progress(done, total, f"Synced {done}/{total} files"),
+                loop,
+            )
+
+    stats = indexing.sync(file_paths, root=root, progress_callback=_progress)
     return (
         f"Synced {stats.files_processed} files, "
         f"{stats.chunks_created} chunks in {stats.duration_seconds:.1f}s."

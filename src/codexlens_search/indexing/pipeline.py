@@ -604,6 +604,7 @@ class IndexingPipeline:
         max_chunk_chars: int = _DEFAULT_MAX_CHUNK_CHARS,
         chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
         max_file_size: int = 50_000,
+        progress_callback: callable | None = None,
     ) -> IndexStats:
         """Reconcile index state against a current file list.
 
@@ -637,19 +638,38 @@ class IndexingPipeline:
         for rel in removed:
             self.remove_file(rel)
 
-        # Index new and changed files
-        total_files = 0
-        total_chunks = 0
+        # Collect files needing update
+        files_to_index: list[Path] = []
         for rel, fpath in current_rel_paths.items():
-            stats = self.index_file(
-                fpath,
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            content_hash = self._content_hash(text)
+            if meta.file_needs_update(rel, content_hash):
+                # Remove old data if previously indexed
+                if meta.get_file_hash(rel) is not None:
+                    meta.mark_file_deleted(rel)
+                    self._fts.delete_by_path(rel)
+                files_to_index.append(fpath)
+
+        # Batch index via parallel pipeline
+        if files_to_index:
+            # Set starting chunk ID from metadata
+            start_id = self._next_chunk_id()
+            batch_stats = self._index_files_with_metadata(
+                files_to_index,
                 root=root,
                 max_chunk_chars=max_chunk_chars,
                 chunk_overlap=chunk_overlap,
-                max_file_size=max_file_size,
+                start_chunk_id=start_id,
+                progress_callback=progress_callback,
             )
-            total_files += stats.files_processed
-            total_chunks += stats.chunks_created
+            total_files = batch_stats.files_processed
+            total_chunks = batch_stats.chunks_created
+        else:
+            total_files = 0
+            total_chunks = 0
 
         duration = time.monotonic() - t0
         result = IndexStats(
@@ -664,6 +684,157 @@ class IndexingPipeline:
             len(removed), result.duration_seconds,
         )
         return result
+
+    def _index_files_with_metadata(
+        self,
+        files: list[Path],
+        *,
+        root: Path | None = None,
+        max_chunk_chars: int = _DEFAULT_MAX_CHUNK_CHARS,
+        chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
+        start_chunk_id: int = 0,
+        progress_callback: callable | None = None,
+    ) -> IndexStats:
+        """Batch index files using the parallel pipeline, registering metadata.
+
+        Like index_files() but also registers each file and its chunks
+        in the MetadataStore for incremental tracking.
+
+        Args:
+            files: Files to index.
+            root: Root for relative paths.
+            max_chunk_chars: Max chars per chunk.
+            chunk_overlap: Overlap between chunks.
+            start_chunk_id: Starting chunk ID.
+            progress_callback: Optional callback(files_done, total_files) for progress.
+        """
+        meta = self._require_metadata()
+        if not files:
+            return IndexStats()
+
+        t0 = time.monotonic()
+
+        embed_queue: queue.Queue = queue.Queue(maxsize=4)
+        index_queue: queue.Queue = queue.Queue(maxsize=4)
+
+        worker_errors: list[Exception] = []
+        error_lock = threading.Lock()
+
+        def _record_error(exc: Exception) -> None:
+            with error_lock:
+                worker_errors.append(exc)
+
+        embed_thread = threading.Thread(
+            target=self._embed_worker,
+            args=(embed_queue, index_queue, _record_error),
+            daemon=True, name="sync-embed",
+        )
+        index_thread = threading.Thread(
+            target=self._index_worker,
+            args=(index_queue, _record_error),
+            daemon=True, name="sync-index",
+        )
+        embed_thread.start()
+        index_thread.start()
+
+        chunk_id = start_chunk_id
+        files_processed = 0
+        chunks_created = 0
+        total_files = len(files)
+
+        # Cross-file chunk accumulator for optimal API batch utilization
+        max_batch_items = self._config.embed_batch_size
+        max_batch_tokens = self._config.embed_api_max_tokens_per_batch
+        buf_ids: list[int] = []
+        buf_texts: list[str] = []
+        buf_paths: list[str] = []
+        buf_lines: list[tuple[int, int]] = []
+        buf_tokens = 0
+
+        def _flush_buffer() -> None:
+            nonlocal buf_ids, buf_texts, buf_paths, buf_lines, buf_tokens
+            if buf_ids:
+                embed_queue.put((list(buf_ids), list(buf_texts), list(buf_paths), list(buf_lines)))
+                buf_ids.clear()
+                buf_texts.clear()
+                buf_paths.clear()
+                buf_lines.clear()
+                buf_tokens = 0
+
+        for fpath in files:
+            exclude_reason = is_file_excluded(fpath, self._config)
+            if exclude_reason:
+                logger.debug("Skipping %s: %s", fpath, exclude_reason)
+                if progress_callback:
+                    progress_callback(files_processed, total_files)
+                continue
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+            except Exception as exc:
+                logger.debug("Skipping %s: %s", fpath, exc)
+                if progress_callback:
+                    progress_callback(files_processed, total_files)
+                continue
+
+            rel_path = str(fpath.relative_to(root)) if root else str(fpath)
+            content_hash = self._content_hash(text)
+            file_chunks = self._smart_chunk(text, rel_path, max_chunk_chars, chunk_overlap)
+
+            if not file_chunks:
+                meta.register_file(rel_path, content_hash, fpath.stat().st_mtime)
+                continue
+
+            files_processed += 1
+            file_chunk_ids = []
+            for chunk_text, path, sl, el in file_chunks:
+                chunk_tokens = max(1, len(chunk_text) // 4)
+                # Flush if adding this chunk would exceed batch limits
+                if buf_ids and (
+                    len(buf_ids) >= max_batch_items
+                    or buf_tokens + chunk_tokens > max_batch_tokens
+                ):
+                    _flush_buffer()
+
+                buf_ids.append(chunk_id)
+                buf_texts.append(chunk_text)
+                buf_paths.append(path)
+                buf_lines.append((sl, el))
+                buf_tokens += chunk_tokens
+                file_chunk_ids.append((chunk_id, chunk_text))
+                chunk_id += 1
+
+            chunks_created += len(file_chunk_ids)
+
+            # Register metadata per file
+            meta.register_file(rel_path, content_hash, fpath.stat().st_mtime)
+            chunk_id_hashes = [
+                (cid, self._content_hash(ct)) for cid, ct in file_chunk_ids
+            ]
+            meta.register_chunks(rel_path, chunk_id_hashes)
+
+            if progress_callback:
+                progress_callback(files_processed, total_files)
+
+        # Final flush for remaining chunks
+        _flush_buffer()
+
+        embed_queue.put(_SENTINEL)
+        embed_thread.join()
+        index_thread.join()
+
+        self._binary_store.save()
+        self._ann_index.save()
+
+        duration = time.monotonic() - t0
+
+        if worker_errors:
+            raise worker_errors[0]
+
+        return IndexStats(
+            files_processed=files_processed,
+            chunks_created=chunks_created,
+            duration_seconds=round(duration, 2),
+        )
 
     def compact(self) -> None:
         """Rebuild indexes excluding tombstoned chunk IDs.

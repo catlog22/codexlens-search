@@ -81,7 +81,7 @@ def _get_fts(project_path: str):
 # Tool 1: search_code — unified search
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(name="Search")
 def search_code(
     project_path: str,
     query: str,

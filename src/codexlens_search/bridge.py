@@ -113,6 +113,11 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["fts_top_k"] = int(os.environ["CODEXLENS_FTS_TOP_K"])
     if os.environ.get("CODEXLENS_FUSION_K"):
         kwargs["fusion_k"] = int(os.environ["CODEXLENS_FUSION_K"])
+    # AST chunking from env
+    if os.environ.get("CODEXLENS_AST_CHUNKING"):
+        kwargs["ast_chunking"] = os.environ["CODEXLENS_AST_CHUNKING"].lower() in ("true", "1", "yes")
+    if os.environ.get("CODEXLENS_GITIGNORE_FILTERING"):
+        kwargs["gitignore_filtering"] = os.environ["CODEXLENS_GITIGNORE_FILTERING"].lower() in ("true", "1", "yes")
     # Indexing params from env
     if os.environ.get("CODEXLENS_CODE_AWARE_CHUNKING"):
         kwargs["code_aware_chunking"] = os.environ["CODEXLENS_CODE_AWARE_CHUNKING"].lower() == "true"
@@ -239,6 +244,16 @@ def create_pipeline(
     fts = FTSEngine(resolved / "fts.db")
     metadata = MetadataStore(resolved / "metadata.db")
 
+    # GraphSearcher: auto-enable when symbols table has data
+    from codexlens_search.search.graph import GraphSearcher
+    graph_searcher: GraphSearcher | None = None
+    try:
+        sym_count = fts._conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > 0:
+            graph_searcher = GraphSearcher(fts, expand_hops=1)
+    except Exception:
+        pass
+
     indexing = IndexingPipeline(
         embedder=embedder,
         binary_store=binary_store,
@@ -256,6 +271,7 @@ def create_pipeline(
         fts=fts,
         config=config,
         metadata_store=metadata,
+        graph_searcher=graph_searcher,
     )
 
     return indexing, search, config

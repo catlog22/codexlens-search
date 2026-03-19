@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codexlens-search"
-version = "0.4.1"
-description = "Lightweight semantic code search engine — 2-stage vector + FTS + RRF fusion + MCP server"
+version = "0.5.0"
+description = "Lightweight semantic code search engine — hybrid vector + FTS + AST graph + regex fusion + MCP server"
 requires-python = ">=3.10"
 dependencies = [
     "hnswlib>=0.8.0",

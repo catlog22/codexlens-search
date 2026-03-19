@@ -1,10 +1,13 @@
 """MCP server for codexlens-search.
 
-Exposes 3 tools via FastMCP: search_code, index_project, find_files.
+Tools:
+  - Search:        Hybrid code search (semantic + regex) with symbol/reference lookup.
+  - index_project: Build, update, or inspect the search index.
+  - find_files:    Glob-based file discovery.
 
-Run as: codexlens-mcp (entry point) or python -m codexlens_search.mcp_server
+Run: codexlens-mcp  or  python -m codexlens_search.mcp_server
 
-## .mcp.json Configuration
+## .mcp.json
 
 ```json
 {
@@ -22,9 +25,6 @@ Run as: codexlens-mcp (entry point) or python -m codexlens_search.mcp_server
   }
 }
 ```
-
-Env vars: CODEXLENS_EMBED_API_URL/KEY/MODEL/DIM, CODEXLENS_AST_CHUNKING,
-CODEXLENS_GITIGNORE_FILTERING, CODEXLENS_RERANKER_API_URL/KEY/MODEL
 """
 from __future__ import annotations
 
@@ -91,18 +91,17 @@ async def search_code(
     top_k: int = 10,
     scope: str = "",
 ) -> str:
-    """Search code with hybrid fusion (FTS + vector + graph) or lookup symbols/references.
+    """Search code in a project.
 
     Args:
         project_path: Absolute path to the project root.
-        query: Search query — code symbol name, natural language, or regex pattern.
-        mode: Search mode:
-            - "auto": Hybrid search (FTS + vector + graph + regex parallel). Falls back to regex if no index.
-            - "symbol": Find symbol definitions by name (class, function, method).
-            - "refs": Find all references to a symbol (imports, calls, inheritance).
-            - "regex": Exact regex pattern search via ripgrep. Searches live files.
+        query: Search query — natural language, code symbol, or regex pattern.
+        mode: "auto" (default) — semantic + regex parallel, falls back to regex if no index.
+              "symbol" — find definitions by name (class, function, method).
+              "refs" — find cross-references (imports, calls, inheritance).
+              "regex" — ripgrep regex on live files (requires rg in PATH).
         top_k: Max results (default 10).
-        scope: Optional relative path to restrict results (e.g. "src/auth").
+        scope: Relative path to restrict search (e.g. "src/auth").
     """
     root = Path(project_path).resolve()
     if not root.is_dir():

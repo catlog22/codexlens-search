@@ -29,7 +29,9 @@ CODEXLENS_GITIGNORE_FILTERING, CODEXLENS_RERANKER_API_URL/KEY/MODEL
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import shutil
 import threading
 from pathlib import Path
 
@@ -82,7 +84,7 @@ def _get_fts(project_path: str):
 # ---------------------------------------------------------------------------
 
 @mcp.tool(name="Search")
-def search_code(
+async def search_code(
     project_path: str,
     query: str,
     mode: str = "auto",
@@ -93,11 +95,12 @@ def search_code(
 
     Args:
         project_path: Absolute path to the project root.
-        query: Search query — code symbol name, natural language, or pattern.
+        query: Search query — code symbol name, natural language, or regex pattern.
         mode: Search mode:
             - "auto": Hybrid search (FTS + vector + graph). Best for general queries.
             - "symbol": Find symbol definitions by name (class, function, method).
             - "refs": Find all references to a symbol (imports, calls, inheritance).
+            - "regex": Exact regex pattern search via ripgrep. Searches live files.
         top_k: Max results (default 10).
         scope: Optional relative path to restrict results (e.g. "src/auth").
     """
@@ -105,6 +108,8 @@ def search_code(
     if not root.is_dir():
         return f"Error: project path not found: {root}"
 
+    if mode == "regex":
+        return await _search_regex(project_path, query, top_k, scope)
     if mode == "symbol":
         return _search_symbol(project_path, query, top_k)
     if mode == "refs":
@@ -203,6 +208,65 @@ def _search_refs(project_path: str, name: str) -> str:
                 f"- {r['ref_kind']:10s} `{name}` → `{r['to_name']}` L{r['line']}"
             )
 
+    return "\n".join(lines)
+
+
+async def _search_regex(project_path: str, pattern: str, top_k: int, scope: str) -> str:
+    """Search files with ripgrep regex pattern."""
+    rg = shutil.which("rg")
+    if rg is None:
+        return "Error: regex search requires 'ripgrep' (rg) installed and in PATH."
+
+    root = Path(project_path).resolve()
+    search_path = str(root / scope) if scope else str(root)
+
+    cmd = [rg, "--json", "--max-count", "50", pattern, search_path]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+    except OSError as e:
+        return f"Error: failed to run rg: {e}"
+
+    if proc.returncode not in (0, 1):  # 1 = no matches
+        err_msg = stderr.decode(errors="replace").strip()
+        return f"Error: rg failed: {err_msg}"
+
+    # Parse rg --json output
+    matches: list[tuple[str, int, str]] = []  # (rel_path, line_no, text)
+    for raw_line in stdout.split(b"\n"):
+        if not raw_line.strip():
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "match":
+            continue
+        data = obj["data"]
+        abs_path = data["path"].get("text", "")
+        line_no = data.get("line_number", 0)
+        text = data["lines"].get("text", "").rstrip("\n")
+        # Make path relative to project root
+        try:
+            rel = Path(abs_path).relative_to(root).as_posix()
+        except ValueError:
+            rel = abs_path
+        matches.append((rel, line_no, text))
+        if len(matches) >= top_k:
+            break
+
+    if not matches:
+        return "No results found."
+
+    lines = []
+    for i, (path, line_no, text) in enumerate(matches, 1):
+        lines.append(f"## {i}. {path} L{line_no}")
+        lines.append(f"```\n{text}\n```\n")
     return "\n".join(lines)
 
 

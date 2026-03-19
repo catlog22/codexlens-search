@@ -52,6 +52,7 @@ class TestWatcherConfig:
         assert ".git" in cfg.ignored_patterns
         assert "__pycache__" in cfg.ignored_patterns
         assert "node_modules" in cfg.ignored_patterns
+        assert ".codexlens" in cfg.ignored_patterns
 
     def test_custom(self):
         cfg = WatcherConfig(debounce_ms=1000, ignored_patterns={".custom"})

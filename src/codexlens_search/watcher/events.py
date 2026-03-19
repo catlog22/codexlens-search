@@ -51,7 +51,7 @@ class WatcherConfig:
         # IDE / Editor
         ".idea", ".vscode", ".vs",
         # Package / cache
-        ".cache", ".parcel-cache", ".turbo", ".next", ".nuxt",
+        ".cache", ".parcel-cache", ".turbo", ".next", ".nuxt", ".codexlens",
         # Logs / temp
         "logs", "tmp", "temp",
     })

@@ -296,7 +296,7 @@ def cmd_remove_file(args: argparse.Namespace) -> None:
 DEFAULT_EXCLUDES = frozenset({
     "node_modules", ".git", "__pycache__", "dist", "build",
     ".venv", "venv", ".tox", ".mypy_cache", ".pytest_cache",
-    ".next", ".nuxt", "coverage", ".eggs", "*.egg-info",
+    ".next", ".nuxt", "coverage", ".eggs", "*.egg-info", ".codexlens",
 })
 
 

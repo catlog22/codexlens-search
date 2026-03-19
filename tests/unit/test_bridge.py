@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 import pytest
 
-from codexlens_search.bridge import _build_parser, _json_output, _error_exit
+from codexlens_search.bridge import (
+    DEFAULT_EXCLUDES,
+    _build_parser,
+    _json_output,
+    _error_exit,
+    should_exclude,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +76,12 @@ class TestParser:
     def test_no_command_returns_none(self):
         args = self.parser.parse_args([])
         assert args.command is None
+
+    def test_default_excludes_include_codexlens(self):
+        assert ".codexlens" in DEFAULT_EXCLUDES
+
+    def test_should_exclude_codexlens_directory(self):
+        assert should_exclude(Path(".codexlens") / "metadata.db", DEFAULT_EXCLUDES) is True
 
 
 # ---------------------------------------------------------------------------

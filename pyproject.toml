@@ -50,6 +50,13 @@ faiss-gpu = [
 watcher = [
     "watchdog>=3.0",
 ]
+gitignore = [
+    "pathspec>=0.11",
+]
+ast = [
+    "tree-sitter>=0.23",
+    "tree-sitter-languages>=1.8",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",

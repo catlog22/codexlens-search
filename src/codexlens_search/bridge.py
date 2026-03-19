@@ -124,6 +124,19 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["hnsw_ef"] = int(os.environ["CODEXLENS_HNSW_EF"])
     if os.environ.get("CODEXLENS_HNSW_M"):
         kwargs["hnsw_M"] = int(os.environ["CODEXLENS_HNSW_M"])
+    # Tier config from env
+    if os.environ.get("CODEXLENS_TIER_HOT_HOURS"):
+        kwargs["tier_hot_hours"] = int(os.environ["CODEXLENS_TIER_HOT_HOURS"])
+    if os.environ.get("CODEXLENS_TIER_COLD_HOURS"):
+        kwargs["tier_cold_hours"] = int(os.environ["CODEXLENS_TIER_COLD_HOURS"])
+    # Search quality tier from env
+    if os.environ.get("CODEXLENS_SEARCH_QUALITY"):
+        kwargs["default_search_quality"] = os.environ["CODEXLENS_SEARCH_QUALITY"]
+    # Shard config from env
+    if os.environ.get("CODEXLENS_NUM_SHARDS"):
+        kwargs["num_shards"] = int(os.environ["CODEXLENS_NUM_SHARDS"])
+    if os.environ.get("CODEXLENS_MAX_LOADED_SHARDS"):
+        kwargs["max_loaded_shards"] = int(os.environ["CODEXLENS_MAX_LOADED_SHARDS"])
     resolved = Path(db_path).resolve()
     kwargs["metadata_db_path"] = str(resolved / "metadata.db")
     return Config(**kwargs)
@@ -143,28 +156,8 @@ def _create_config(args: argparse.Namespace) -> "Config":
     return create_config_from_env(args.db_path, **overrides)
 
 
-def create_pipeline(
-    db_path: str | Path,
-    config: "Config | None" = None,
-) -> tuple:
-    """Construct pipeline components from db_path and config.
-
-    Returns (indexing_pipeline, search_pipeline, config).
-    Used by both CLI bridge and MCP server.
-    """
-    from codexlens_search.config import Config
-    from codexlens_search.core.factory import create_ann_index, create_binary_index
-    from codexlens_search.indexing.metadata import MetadataStore
-    from codexlens_search.indexing.pipeline import IndexingPipeline
-    from codexlens_search.search.fts import FTSEngine
-    from codexlens_search.search.pipeline import SearchPipeline
-
-    if config is None:
-        config = create_config_from_env(db_path)
-    resolved = Path(db_path).resolve()
-    resolved.mkdir(parents=True, exist_ok=True)
-
-    # Select embedder: API if configured, otherwise local fastembed
+def _create_embedder(config: "Config"):
+    """Create embedder based on config, auto-detecting embed_dim from API."""
     if config.embed_api_url:
         from codexlens_search.embed.api import APIEmbedder
         embedder = APIEmbedder(config)
@@ -179,13 +172,11 @@ def create_pipeline(
     else:
         from codexlens_search.embed.local import FastEmbedEmbedder
         embedder = FastEmbedEmbedder(config)
+    return embedder
 
-    binary_store = create_binary_index(resolved, config.embed_dim, config)
-    ann_index = create_ann_index(resolved, config.embed_dim, config)
-    fts = FTSEngine(resolved / "fts.db")
-    metadata = MetadataStore(resolved / "metadata.db")
 
-    # Select reranker: API if configured, otherwise local fastembed
+def _create_reranker(config: "Config"):
+    """Create reranker based on config."""
     if config.reranker_api_url:
         from codexlens_search.rerank.api import APIReranker
         reranker = APIReranker(config)
@@ -193,6 +184,60 @@ def create_pipeline(
     else:
         from codexlens_search.rerank.local import FastEmbedReranker
         reranker = FastEmbedReranker(config)
+    return reranker
+
+
+def create_pipeline(
+    db_path: str | Path,
+    config: "Config | None" = None,
+) -> tuple:
+    """Construct pipeline components from db_path and config.
+
+    Returns (indexing_pipeline, search_pipeline, config).
+    Used by both CLI bridge and MCP server.
+
+    When config.num_shards > 1, returns a ShardManager-backed pipeline
+    where indexing and search are delegated to the ShardManager.
+    The returned tuple is (shard_manager, shard_manager, config) so that
+    callers can use shard_manager.sync() and shard_manager.search().
+    """
+    from codexlens_search.config import Config
+
+    if config is None:
+        config = create_config_from_env(db_path)
+    resolved = Path(db_path).resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+
+    embedder = _create_embedder(config)
+    reranker = _create_reranker(config)
+
+    # Sharded mode: delegate to ShardManager
+    if config.num_shards > 1:
+        from codexlens_search.core.shard_manager import ShardManager
+        manager = ShardManager(
+            num_shards=config.num_shards,
+            db_path=resolved,
+            config=config,
+            embedder=embedder,
+            reranker=reranker,
+        )
+        log.info(
+            "Using ShardManager with %d shards (max_loaded=%d)",
+            config.num_shards, config.max_loaded_shards,
+        )
+        return manager, manager, config
+
+    # Single-shard mode: original behavior, no ShardManager overhead
+    from codexlens_search.core.factory import create_ann_index, create_binary_index
+    from codexlens_search.indexing.metadata import MetadataStore
+    from codexlens_search.indexing.pipeline import IndexingPipeline
+    from codexlens_search.search.fts import FTSEngine
+    from codexlens_search.search.pipeline import SearchPipeline
+
+    binary_store = create_binary_index(resolved, config.embed_dim, config)
+    ann_index = create_ann_index(resolved, config.embed_dim, config)
+    fts = FTSEngine(resolved / "fts.db")
+    metadata = MetadataStore(resolved / "metadata.db")
 
     indexing = IndexingPipeline(
         embedder=embedder,

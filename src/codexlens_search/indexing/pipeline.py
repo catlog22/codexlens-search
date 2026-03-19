@@ -17,27 +17,104 @@ from pathlib import Path
 import numpy as np
 
 from codexlens_search.config import Config
-from codexlens_search.core.binary import BinaryStore
-from codexlens_search.core.index import ANNIndex
+from codexlens_search.core.base import BaseANNIndex, BaseBinaryIndex
 from codexlens_search.embed.base import BaseEmbedder
 from codexlens_search.indexing.metadata import MetadataStore
 from codexlens_search.search.fts import FTSEngine
+
+try:
+    from codexlens_search.indexing.gitignore import GitignoreAwareMatcher
+
+    _HAS_GITIGNORE = True
+except ImportError:
+    _HAS_GITIGNORE = False
+
+try:
+    from codexlens_search.parsers.chunker import chunk_by_ast
+    from codexlens_search.parsers.parser import ASTParser
+    from codexlens_search.parsers.symbols import extract_symbols as _extract_symbols
+    from codexlens_search.parsers.references import extract_references as _extract_references
+
+    _HAS_AST_CHUNKER = True
+except ImportError:
+    _HAS_AST_CHUNKER = False
 
 logger = logging.getLogger(__name__)
 
 # Sentinel value to signal worker shutdown
 _SENTINEL = None
 
+# ---------------------------------------------------------------------------
+# Language detection: 3-tier extension mapping (~30 extensions)
+# ---------------------------------------------------------------------------
+# Tier 1: Most common languages
+# Tier 2: Popular but less common
+# Tier 3: Niche / scripting
+_EXT_TO_LANGUAGE: dict[str, str] = {
+    # Tier 1
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".go": "go",
+    ".java": "java",
+    ".rs": "rust",
+    ".cpp": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".hpp": "cpp",
+    # Tier 2
+    ".rb": "ruby",
+    ".php": "php",
+    ".scala": "scala",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".swift": "swift",
+    ".cs": "csharp",
+    ".vue": "vue",
+    ".svelte": "svelte",
+    # Tier 3
+    ".lua": "lua",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".ps1": "powershell",
+    ".r": "r",
+    ".R": "r",
+    ".pl": "perl",
+    ".pm": "perl",
+    ".ex": "elixir",
+    ".exs": "elixir",
+}
+
+
+def detect_language(path: str) -> str | None:
+    """Detect programming language from file extension.
+
+    Returns language name string or None if unrecognized.
+    """
+    suffix = Path(path).suffix.lower()
+    return _EXT_TO_LANGUAGE.get(suffix)
+
 # Defaults for chunking (can be overridden via index_files kwargs)
 _DEFAULT_MAX_CHUNK_CHARS = 800
 _DEFAULT_CHUNK_OVERLAP = 100
 
 
-def is_file_excluded(file_path: Path, config: Config) -> str | None:
+def is_file_excluded(
+    file_path: Path,
+    config: Config,
+    gitignore_matcher: "GitignoreAwareMatcher | None" = None,
+) -> str | None:
     """Check if a file should be excluded from indexing.
 
     Returns exclusion reason string, or None if file should be indexed.
     """
+    # Gitignore check (when matcher is available)
+    if gitignore_matcher is not None and gitignore_matcher.is_excluded(file_path):
+        return "excluded by .gitignore"
+
     # Extension check
     suffix = file_path.suffix.lower()
     # Handle compound extensions like .min.js
@@ -100,8 +177,8 @@ class IndexingPipeline:
     def __init__(
         self,
         embedder: BaseEmbedder,
-        binary_store: BinaryStore,
-        ann_index: ANNIndex,
+        binary_store: BaseBinaryIndex,
+        ann_index: BaseANNIndex,
         fts: FTSEngine,
         config: Config,
         metadata: MetadataStore | None = None,
@@ -112,6 +189,20 @@ class IndexingPipeline:
         self._fts = fts
         self._config = config
         self._metadata = metadata
+        self._gitignore_matcher = None
+
+    def _get_gitignore_matcher(self, root: Path | None) -> "GitignoreAwareMatcher | None":
+        """Return gitignore matcher if enabled and pathspec is available."""
+        if not self._config.gitignore_filtering:
+            return None
+        if not _HAS_GITIGNORE:
+            logger.debug("gitignore_filtering enabled but pathspec not installed; skipping")
+            return None
+        if root is None:
+            return None
+        if self._gitignore_matcher is None or getattr(self._gitignore_matcher, '_root', None) != root.resolve():
+            self._gitignore_matcher = GitignoreAwareMatcher(root)
+        return self._gitignore_matcher
 
     def index_files(
         self,
@@ -171,10 +262,12 @@ class IndexingPipeline:
         chunk_id = 0
         files_processed = 0
         chunks_created = 0
+        all_symbols: list[tuple[int, str, str, int, int, str, str, str]] = []
+        all_refs: list[tuple[str, str, str, str, int]] = []
 
         for fpath in files:
             # Noise file filter
-            exclude_reason = is_file_excluded(fpath, self._config)
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
             if exclude_reason:
                 logger.debug("Skipping %s: %s", fpath, exclude_reason)
                 continue
@@ -197,15 +290,28 @@ class IndexingPipeline:
             batch_texts = []
             batch_paths = []
             batch_lines: list[tuple[int, int]] = []
-            for chunk_text, path, sl, el in file_chunks:
+            batch_langs: list[str] = []
+            for chunk_text, path, sl, el, lang in file_chunks:
                 batch_ids.append(chunk_id)
                 batch_texts.append(chunk_text)
                 batch_paths.append(path)
                 batch_lines.append((sl, el))
+                batch_langs.append(lang)
                 chunk_id += 1
 
             chunks_created += len(batch_ids)
-            embed_queue.put((batch_ids, batch_texts, batch_paths, batch_lines))
+            embed_queue.put((batch_ids, batch_texts, batch_paths, batch_lines, batch_langs))
+
+            # Collect symbols and refs for batch persistence after workers finish
+            file_lang = file_chunks[0][4] if file_chunks else ""
+            if self._should_extract_symbols(file_lang):
+                sym_rows = self._extract_file_symbols(
+                    text, file_lang, batch_ids, batch_lines,
+                )
+                all_symbols.extend(sym_rows)
+                # Extract cross-references
+                ref_rows = self._extract_file_refs(text, file_lang, rel_path)
+                all_refs.extend(ref_rows)
 
         # Signal embed worker: no more data
         embed_queue.put(_SENTINEL)
@@ -217,6 +323,15 @@ class IndexingPipeline:
         # --- Final flush ---
         self._binary_store.save()
         self._ann_index.save()
+
+        # Persist collected symbols after all FTS writes are complete
+        if all_symbols:
+            self._fts.add_symbols(all_symbols)
+
+        # Persist refs and resolve after all symbols are written
+        if all_refs:
+            self._fts.add_refs(all_refs)
+            self._fts.resolve_refs()
 
         duration = time.monotonic() - t0
         stats = IndexStats(
@@ -255,12 +370,12 @@ class IndexingPipeline:
                 if item is _SENTINEL:
                     break
 
-                batch_ids, batch_texts, batch_paths, batch_lines = item
+                batch_ids, batch_texts, batch_paths, batch_lines, batch_langs = item
                 try:
                     vecs = self._embedder.embed_batch(batch_texts)
                     vec_array = np.array(vecs, dtype=np.float32)
                     id_array = np.array(batch_ids, dtype=np.int64)
-                    out_q.put((id_array, vec_array, batch_texts, batch_paths, batch_lines))
+                    out_q.put((id_array, vec_array, batch_texts, batch_paths, batch_lines, batch_langs))
                 except Exception as exc:
                     logger.error("Embed worker error: %s", exc)
                     on_error(exc)
@@ -279,14 +394,14 @@ class IndexingPipeline:
             if item is _SENTINEL:
                 break
 
-            id_array, vec_array, texts, paths, line_ranges = item
+            id_array, vec_array, texts, paths, line_ranges, langs = item
             try:
                 self._binary_store.add(id_array, vec_array)
                 self._ann_index.add(id_array, vec_array)
 
                 fts_docs = [
                     (int(id_array[i]), paths[i], texts[i],
-                     line_ranges[i][0], line_ranges[i][1])
+                     line_ranges[i][0], line_ranges[i][1], langs[i])
                     for i in range(len(id_array))
                 ]
                 self._fts.add_documents(fts_docs)
@@ -430,15 +545,138 @@ class IndexingPipeline:
         path: str,
         max_chars: int,
         overlap: int,
-    ) -> list[tuple[str, str, int, int]]:
-        """Choose chunking strategy based on file type and config."""
+    ) -> list[tuple[str, str, int, int, str]]:
+        """Choose chunking strategy based on file type and config.
+
+        Fallback chain: AST chunking -> regex code chunking -> plain text.
+
+        Returns list of (chunk_text, path, start_line, end_line, language) tuples.
+        """
+        lang = detect_language(path) or ""
+
+        # Level 1: AST-based chunking (requires tree-sitter)
+        if (
+            self._config.ast_chunking
+            and _HAS_AST_CHUNKER
+            and lang
+            and (
+                self._config.ast_languages is None
+                or lang in self._config.ast_languages
+            )
+        ):
+            try:
+                result = chunk_by_ast(text, path, lang, max_chars, overlap)
+                if result:
+                    return [(t, p, sl, el, lang) for t, p, sl, el in result]
+            except Exception as exc:
+                logger.debug("AST chunking failed for %s: %s", path, exc)
+
+        # Level 2: Regex-based code-aware chunking
         if self._config.code_aware_chunking:
             suffix = Path(path).suffix.lower()
             if suffix in self._config.code_extensions:
                 result = self._chunk_code(text, path, max_chars, overlap)
                 if result:
-                    return result
-        return self._chunk_text(text, path, max_chars, overlap)
+                    return [(t, p, sl, el, lang) for t, p, sl, el in result]
+
+        # Level 3: Plain text chunking
+        base = self._chunk_text(text, path, max_chars, overlap)
+        return [(t, p, sl, el, lang) for t, p, sl, el in base]
+
+    # ------------------------------------------------------------------
+    # Symbol extraction
+    # ------------------------------------------------------------------
+
+    def _extract_file_symbols(
+        self,
+        text: str,
+        language: str,
+        chunk_ids: list[int],
+        chunk_lines: list[tuple[int, int]],
+    ) -> list[tuple[int, str, str, int, int, str, str, str]]:
+        """Extract symbols from source and map each to its owning chunk_id.
+
+        Returns tuples ready for ``FTSEngine.add_symbols()``:
+        (chunk_id, name, kind, start_line, end_line, parent_name, signature, language).
+
+        Only called when AST chunking is active and a language is detected.
+        """
+        if not _HAS_AST_CHUNKER or not language:
+            return []
+
+        parser = ASTParser.get_instance()
+        tree = parser.parse(text.encode("utf-8", errors="replace"), language)
+        if tree is None:
+            return []
+
+        symbols = _extract_symbols(tree, language)
+        if not symbols:
+            return []
+
+        # Map each symbol to the chunk whose line range contains the symbol's start_line
+        result: list[tuple[int, str, str, int, int, str, str, str]] = []
+        for sym in symbols:
+            owning_chunk_id = None
+            for i, (sl, el) in enumerate(chunk_lines):
+                if sl <= sym.start_line <= el:
+                    owning_chunk_id = chunk_ids[i]
+                    break
+            if owning_chunk_id is None and chunk_ids:
+                # Fallback: assign to last chunk
+                owning_chunk_id = chunk_ids[-1]
+            if owning_chunk_id is not None:
+                result.append((
+                    owning_chunk_id,
+                    sym.name,
+                    sym.kind.value,
+                    sym.start_line,
+                    sym.end_line,
+                    sym.parent_name or "",
+                    sym.signature or "",
+                    sym.language,
+                ))
+        return result
+
+    def _should_extract_symbols(self, language: str) -> bool:
+        """Check if symbol extraction should be attempted for this language."""
+        return (
+            self._config.ast_chunking
+            and _HAS_AST_CHUNKER
+            and bool(language)
+            and (
+                self._config.ast_languages is None
+                or language in self._config.ast_languages
+            )
+        )
+
+    def _extract_file_refs(
+        self,
+        text: str,
+        language: str,
+        rel_path: str,
+        symbols_for_file: list | None = None,
+    ) -> list[tuple[str, str, str, str, int]]:
+        """Extract cross-references from source and format for FTSEngine.add_refs().
+
+        Returns tuples: (from_name, from_path, to_name, ref_kind, line).
+        """
+        if not _HAS_AST_CHUNKER or not language:
+            return []
+
+        parser = ASTParser.get_instance()
+        tree = parser.parse(text.encode("utf-8", errors="replace"), language)
+        if tree is None:
+            return []
+
+        # Use provided symbols or extract fresh ones
+        if symbols_for_file is None:
+            symbols_for_file = _extract_symbols(tree, language)
+
+        refs = _extract_references(tree, language, symbols_for_file)
+        return [
+            (ref.from_symbol_name, rel_path, ref.to_name, ref.ref_kind, ref.line)
+            for ref in refs
+        ]
 
     # ------------------------------------------------------------------
     # Incremental API
@@ -462,6 +700,114 @@ class IndexingPipeline:
         """Return the next available chunk ID from MetadataStore."""
         meta = self._require_metadata()
         return meta.max_chunk_id() + 1
+
+    def index_files_fts_only(
+        self,
+        files: list[Path],
+        *,
+        root: Path | None = None,
+        max_chunk_chars: int = _DEFAULT_MAX_CHUNK_CHARS,
+        chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
+    ) -> IndexStats:
+        """Index files into FTS5 only, without embedding or vector indexing.
+
+        Chunks files using the same logic as the full pipeline, then inserts
+        directly into FTS. No embedding computation, no binary/ANN store writes.
+
+        Args:
+            files: List of file paths to index.
+            root: Optional root for computing relative paths.
+            max_chunk_chars: Maximum characters per chunk.
+            chunk_overlap: Character overlap between consecutive chunks.
+
+        Returns:
+            IndexStats with counts and timing.
+        """
+        if not files:
+            return IndexStats()
+
+        meta = self._require_metadata()
+        t0 = time.monotonic()
+        chunk_id = self._next_chunk_id()
+        files_processed = 0
+        chunks_created = 0
+
+        for fpath in files:
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
+            if exclude_reason:
+                logger.debug("Skipping %s: %s", fpath, exclude_reason)
+                continue
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+            except Exception as exc:
+                logger.debug("Skipping %s: %s", fpath, exc)
+                continue
+
+            rel_path = str(fpath.relative_to(root)) if root else str(fpath)
+            content_hash = self._content_hash(text)
+
+            # Skip unchanged files
+            if not meta.file_needs_update(rel_path, content_hash):
+                continue
+
+            # Remove old FTS data if file was previously indexed
+            if meta.get_file_hash(rel_path) is not None:
+                meta.mark_file_deleted(rel_path)
+                self._fts.delete_by_path(rel_path)
+
+            file_chunks = self._smart_chunk(text, rel_path, max_chunk_chars, chunk_overlap)
+            if not file_chunks:
+                st = fpath.stat()
+                meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
+                continue
+
+            files_processed += 1
+            fts_docs = []
+            chunk_id_hashes = []
+            file_chunk_ids: list[int] = []
+            file_chunk_lines: list[tuple[int, int]] = []
+            for chunk_text, path, sl, el, lang in file_chunks:
+                fts_docs.append((chunk_id, path, chunk_text, sl, el, lang))
+                chunk_id_hashes.append((chunk_id, self._content_hash(chunk_text)))
+                file_chunk_ids.append(chunk_id)
+                file_chunk_lines.append((sl, el))
+                chunk_id += 1
+
+            self._fts.add_documents(fts_docs)
+            chunks_created += len(fts_docs)
+
+            # Persist symbols when AST chunking produced the chunks
+            file_lang = file_chunks[0][4] if file_chunks else ""
+            if self._should_extract_symbols(file_lang):
+                sym_rows = self._extract_file_symbols(
+                    text, file_lang, file_chunk_ids, file_chunk_lines,
+                )
+                if sym_rows:
+                    self._fts.add_symbols(sym_rows)
+                # Extract and persist cross-references
+                ref_rows = self._extract_file_refs(text, file_lang, rel_path)
+                if ref_rows:
+                    self._fts.add_refs(ref_rows)
+
+            # Register metadata
+            st = fpath.stat()
+            meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
+            meta.register_chunks(rel_path, chunk_id_hashes)
+
+        # Resolve all refs after all files are processed
+        self._fts.resolve_refs()
+
+        duration = time.monotonic() - t0
+        stats = IndexStats(
+            files_processed=files_processed,
+            chunks_created=chunks_created,
+            duration_seconds=round(duration, 2),
+        )
+        logger.info(
+            "FTS-only indexing complete: %d files, %d chunks in %.1fs",
+            stats.files_processed, stats.chunks_created, stats.duration_seconds,
+        )
+        return stats
 
     def index_file(
         self,
@@ -493,7 +839,7 @@ class IndexingPipeline:
         t0 = time.monotonic()
 
         # Noise file filter
-        exclude_reason = is_file_excluded(file_path, self._config)
+        exclude_reason = is_file_excluded(file_path, self._config, self._get_gitignore_matcher(root))
         if exclude_reason:
             logger.debug("Skipping %s: %s", file_path, exclude_reason)
             return IndexStats(duration_seconds=round(time.monotonic() - t0, 2))
@@ -522,7 +868,8 @@ class IndexingPipeline:
         file_chunks = self._smart_chunk(text, rel_path, max_chunk_chars, chunk_overlap)
         if not file_chunks:
             # Register file with no chunks
-            meta.register_file(rel_path, content_hash, file_path.stat().st_mtime)
+            st = file_path.stat()
+            meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
             return IndexStats(
                 files_processed=1,
                 duration_seconds=round(time.monotonic() - t0, 2),
@@ -534,11 +881,13 @@ class IndexingPipeline:
         batch_texts = []
         batch_paths = []
         batch_lines: list[tuple[int, int]] = []
-        for i, (chunk_text, path, sl, el) in enumerate(file_chunks):
+        batch_langs: list[str] = []
+        for i, (chunk_text, path, sl, el, lang) in enumerate(file_chunks):
             batch_ids.append(start_id + i)
             batch_texts.append(chunk_text)
             batch_paths.append(path)
             batch_lines.append((sl, el))
+            batch_langs.append(lang)
 
         # Embed synchronously
         vecs = self._embedder.embed_batch(batch_texts)
@@ -550,13 +899,28 @@ class IndexingPipeline:
         self._ann_index.add(id_array, vec_array)
         fts_docs = [
             (batch_ids[i], batch_paths[i], batch_texts[i],
-             batch_lines[i][0], batch_lines[i][1])
+             batch_lines[i][0], batch_lines[i][1], batch_langs[i])
             for i in range(len(batch_ids))
         ]
         self._fts.add_documents(fts_docs)
 
+        # Persist symbols when AST chunking is active
+        file_lang = file_chunks[0][4] if file_chunks else ""
+        if self._should_extract_symbols(file_lang):
+            sym_rows = self._extract_file_symbols(
+                text, file_lang, batch_ids, batch_lines,
+            )
+            if sym_rows:
+                self._fts.add_symbols(sym_rows)
+            # Extract, persist, and resolve cross-references
+            ref_rows = self._extract_file_refs(text, file_lang, rel_path)
+            if ref_rows:
+                self._fts.add_refs(ref_rows)
+                self._fts.resolve_refs()
+
         # Register in metadata
-        meta.register_file(rel_path, content_hash, file_path.stat().st_mtime)
+        st = file_path.stat()
+        meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
         chunk_id_hashes = [
             (batch_ids[i], self._content_hash(batch_texts[i]))
             for i in range(len(batch_ids))
@@ -583,13 +947,14 @@ class IndexingPipeline:
         """Mark a file as deleted via tombstone strategy.
 
         Marks all chunk IDs for the file in MetadataStore.deleted_chunks
-        and removes the file's FTS entries.
+        and removes the file's FTS, symbol, and reference entries.
 
         Args:
             file_path: The relative path identifier of the file to remove.
         """
         meta = self._require_metadata()
         count = meta.mark_file_deleted(file_path)
+        # delete_by_path also cleans up refs by path
         fts_count = self._fts.delete_by_path(file_path)
         logger.info(
             "Removed file %s: %d chunks tombstoned, %d FTS entries deleted",
@@ -605,6 +970,7 @@ class IndexingPipeline:
         chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
         max_file_size: int = 50_000,
         progress_callback: callable | None = None,
+        tier: str = "full",
     ) -> IndexStats:
         """Reconcile index state against a current file list.
 
@@ -617,6 +983,9 @@ class IndexingPipeline:
             max_chunk_chars: Maximum characters per chunk.
             chunk_overlap: Character overlap between consecutive chunks.
             max_file_size: Skip files larger than this (bytes).
+            tier: Indexing tier - 'full' (default) runs the full pipeline
+                  with embedding, 'fts_only' runs FTS-only indexing without
+                  embedding or vector stores.
 
         Returns:
             Aggregated IndexStats for all operations.
@@ -638,33 +1007,72 @@ class IndexingPipeline:
         for rel in removed:
             self.remove_file(rel)
 
-        # Collect files needing update
+        # Collect files needing update using 4-level detection:
+        # Level 1: set diff (removed files) - handled above
+        # Level 2: mtime + size fast pre-check via stat()
+        # Level 3: content hash only when mtime/size mismatch
         files_to_index: list[Path] = []
         for rel, fpath in current_rel_paths.items():
+            # Level 2: stat-based fast check
+            try:
+                st = fpath.stat()
+            except OSError:
+                continue
+            if not meta.file_needs_update_fast(rel, st.st_mtime, st.st_size):
+                # mtime + size match stored values -> skip (no read needed)
+                continue
+
+            # Level 3: mtime/size changed -> verify with content hash
             try:
                 text = fpath.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
             content_hash = self._content_hash(text)
-            if meta.file_needs_update(rel, content_hash):
-                # Remove old data if previously indexed
-                if meta.get_file_hash(rel) is not None:
-                    meta.mark_file_deleted(rel)
-                    self._fts.delete_by_path(rel)
-                files_to_index.append(fpath)
+            if not meta.file_needs_update(rel, content_hash):
+                # Content unchanged despite mtime/size change -> update metadata only
+                meta.register_file(rel, content_hash, st.st_mtime, st.st_size)
+                continue
 
-        # Batch index via parallel pipeline
+            # File genuinely changed -> remove old data and queue for re-index
+            if meta.get_file_hash(rel) is not None:
+                meta.mark_file_deleted(rel)
+                self._fts.delete_by_path(rel)
+            files_to_index.append(fpath)
+
+        # Sort files by data tier priority: hot first, then warm, then cold
         if files_to_index:
-            # Set starting chunk ID from metadata
-            start_id = self._next_chunk_id()
-            batch_stats = self._index_files_with_metadata(
-                files_to_index,
-                root=root,
-                max_chunk_chars=max_chunk_chars,
-                chunk_overlap=chunk_overlap,
-                start_chunk_id=start_id,
-                progress_callback=progress_callback,
-            )
+            _tier_priority = {"hot": 0, "warm": 1, "cold": 2}
+            def _tier_sort_key(fp: Path) -> int:
+                rel = str(fp.relative_to(root)) if root else str(fp)
+                t = meta.get_file_tier(rel)
+                return _tier_priority.get(t or "warm", 1)
+            files_to_index.sort(key=_tier_sort_key)
+
+        # Reclassify data tiers after sync detection
+        meta.classify_tiers(
+            self._config.tier_hot_hours, self._config.tier_cold_hours
+        )
+
+        # Batch index via parallel pipeline or FTS-only
+        if files_to_index:
+            if tier == "fts_only":
+                batch_stats = self.index_files_fts_only(
+                    files_to_index,
+                    root=root,
+                    max_chunk_chars=max_chunk_chars,
+                    chunk_overlap=chunk_overlap,
+                )
+            else:
+                # Full pipeline with embedding
+                start_id = self._next_chunk_id()
+                batch_stats = self._index_files_with_metadata(
+                    files_to_index,
+                    root=root,
+                    max_chunk_chars=max_chunk_chars,
+                    chunk_overlap=chunk_overlap,
+                    start_chunk_id=start_id,
+                    progress_callback=progress_callback,
+                )
             total_files = batch_stats.files_processed
             total_chunks = batch_stats.chunks_created
         else:
@@ -741,6 +1149,8 @@ class IndexingPipeline:
         files_processed = 0
         chunks_created = 0
         total_files = len(files)
+        all_symbols: list[tuple[int, str, str, int, int, str, str, str]] = []
+        all_refs: list[tuple[str, str, str, str, int]] = []
 
         # Cross-file chunk accumulator for optimal API batch utilization
         max_batch_items = self._config.embed_batch_size
@@ -749,20 +1159,22 @@ class IndexingPipeline:
         buf_texts: list[str] = []
         buf_paths: list[str] = []
         buf_lines: list[tuple[int, int]] = []
+        buf_langs: list[str] = []
         buf_tokens = 0
 
         def _flush_buffer() -> None:
-            nonlocal buf_ids, buf_texts, buf_paths, buf_lines, buf_tokens
+            nonlocal buf_ids, buf_texts, buf_paths, buf_lines, buf_langs, buf_tokens
             if buf_ids:
-                embed_queue.put((list(buf_ids), list(buf_texts), list(buf_paths), list(buf_lines)))
+                embed_queue.put((list(buf_ids), list(buf_texts), list(buf_paths), list(buf_lines), list(buf_langs)))
                 buf_ids.clear()
                 buf_texts.clear()
                 buf_paths.clear()
                 buf_lines.clear()
+                buf_langs.clear()
                 buf_tokens = 0
 
         for fpath in files:
-            exclude_reason = is_file_excluded(fpath, self._config)
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
             if exclude_reason:
                 logger.debug("Skipping %s: %s", fpath, exclude_reason)
                 if progress_callback:
@@ -781,12 +1193,15 @@ class IndexingPipeline:
             file_chunks = self._smart_chunk(text, rel_path, max_chunk_chars, chunk_overlap)
 
             if not file_chunks:
-                meta.register_file(rel_path, content_hash, fpath.stat().st_mtime)
+                st = fpath.stat()
+                meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
                 continue
 
             files_processed += 1
             file_chunk_ids = []
-            for chunk_text, path, sl, el in file_chunks:
+            file_chunk_ids_only: list[int] = []
+            file_chunk_lines: list[tuple[int, int]] = []
+            for chunk_text, path, sl, el, lang in file_chunks:
                 chunk_tokens = max(1, len(chunk_text) // 4)
                 # Flush if adding this chunk would exceed batch limits
                 if buf_ids and (
@@ -799,14 +1214,28 @@ class IndexingPipeline:
                 buf_texts.append(chunk_text)
                 buf_paths.append(path)
                 buf_lines.append((sl, el))
+                buf_langs.append(lang)
                 buf_tokens += chunk_tokens
                 file_chunk_ids.append((chunk_id, chunk_text))
+                file_chunk_ids_only.append(chunk_id)
+                file_chunk_lines.append((sl, el))
                 chunk_id += 1
 
             chunks_created += len(file_chunk_ids)
 
+            # Collect symbols and refs for batch persistence after workers finish
+            file_lang = file_chunks[0][4] if file_chunks else ""
+            if self._should_extract_symbols(file_lang):
+                sym_rows = self._extract_file_symbols(
+                    text, file_lang, file_chunk_ids_only, file_chunk_lines,
+                )
+                all_symbols.extend(sym_rows)
+                ref_rows = self._extract_file_refs(text, file_lang, rel_path)
+                all_refs.extend(ref_rows)
+
             # Register metadata per file
-            meta.register_file(rel_path, content_hash, fpath.stat().st_mtime)
+            st = fpath.stat()
+            meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
             chunk_id_hashes = [
                 (cid, self._content_hash(ct)) for cid, ct in file_chunk_ids
             ]
@@ -824,6 +1253,15 @@ class IndexingPipeline:
 
         self._binary_store.save()
         self._ann_index.save()
+
+        # Persist collected symbols after all FTS writes are complete
+        if all_symbols:
+            self._fts.add_symbols(all_symbols)
+
+        # Persist refs and resolve after all symbols are written
+        if all_refs:
+            self._fts.add_refs(all_refs)
+            self._fts.resolve_refs()
 
         duration = time.monotonic() - t0
 

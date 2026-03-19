@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 from codexlens_search.config import Config
@@ -97,14 +98,29 @@ def create_binary_index(
     backend = config.binary_backend
 
     if backend == "faiss":
-        from codexlens_search.core.faiss_index import FAISSBinaryIndex
-        return FAISSBinaryIndex(path, dim, config)
+        if _FAISS_AVAILABLE:
+            from codexlens_search.core.faiss_index import FAISSBinaryIndex
+            return FAISSBinaryIndex(path, dim, config)
+        # FAISS explicitly requested but not installed: fall back with warning
+        from codexlens_search.core.binary import BinaryStore
+        warnings.warn(
+            "binary_backend='faiss' but FAISS is not installed. "
+            "Falling back to deprecated numpy BinaryStore. "
+            "Install faiss-cpu or faiss-gpu for the recommended binary backend.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        logger.warning(
+            "binary_backend='faiss' but FAISS not available, "
+            "falling back to deprecated numpy BinaryStore."
+        )
+        return BinaryStore(path, dim, config)
 
     if backend == "hnswlib":
         from codexlens_search.core.binary import BinaryStore
         return BinaryStore(path, dim, config)
 
-    # auto: try faiss first, then numpy-based BinaryStore
+    # auto: try faiss first, then numpy-based BinaryStore (deprecated fallback)
     if _FAISS_AVAILABLE:
         from codexlens_search.core.faiss_index import FAISSBinaryIndex
         logger.info("Auto-selected FAISS binary backend")
@@ -112,5 +128,14 @@ def create_binary_index(
 
     # numpy BinaryStore is always available (no extra deps)
     from codexlens_search.core.binary import BinaryStore
-    logger.info("Auto-selected numpy BinaryStore backend")
+    warnings.warn(
+        "Falling back to numpy BinaryStore because FAISS is not installed. "
+        "BinaryStore is deprecated; install faiss-cpu or faiss-gpu for better performance.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    logger.warning(
+        "FAISS not available, falling back to deprecated numpy BinaryStore. "
+        "Install faiss-cpu or faiss-gpu for the recommended binary backend."
+    )
     return BinaryStore(path, dim, config)

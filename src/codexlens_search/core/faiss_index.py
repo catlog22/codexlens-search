@@ -71,10 +71,23 @@ class FAISSANNIndex(BaseANNIndex):
         self.load()
 
     def load(self) -> None:
-        """Load index from disk or initialize a fresh one."""
+        """Load index from disk or initialize a fresh one.
+
+        Uses IO_FLAG_MMAP for zero-copy memory-mapped loading when available,
+        falling back to regular read_index() on older faiss versions.
+        """
         with self._lock:
             if self._index_path.exists():
-                idx = faiss.read_index(str(self._index_path))
+                try:
+                    idx = faiss.read_index(
+                        str(self._index_path), faiss.IO_FLAG_MMAP
+                    )
+                except (AttributeError, RuntimeError, Exception) as exc:
+                    logger.debug(
+                        "MMAP load failed, falling back to regular read: %s",
+                        exc,
+                    )
+                    idx = faiss.read_index(str(self._index_path))
                 logger.debug(
                     "Loaded FAISS ANN index from %s (%d items)",
                     self._index_path, idx.ntotal,
@@ -201,10 +214,23 @@ class FAISSBinaryIndex(BaseBinaryIndex):
         return np.packbits(binary).reshape(1, -1)
 
     def load(self) -> None:
-        """Load binary index from disk or initialize a fresh one."""
+        """Load binary index from disk or initialize a fresh one.
+
+        Uses IO_FLAG_MMAP for zero-copy memory-mapped loading when available,
+        falling back to regular read_index_binary() on older faiss versions.
+        """
         with self._lock:
             if self._index_path.exists():
-                idx = faiss.read_index_binary(str(self._index_path))
+                try:
+                    idx = faiss.read_index_binary(
+                        str(self._index_path), faiss.IO_FLAG_MMAP
+                    )
+                except (AttributeError, RuntimeError, Exception) as exc:
+                    logger.debug(
+                        "MMAP load failed, falling back to regular read: %s",
+                        exc,
+                    )
+                    idx = faiss.read_index_binary(str(self._index_path))
                 logger.debug(
                     "Loaded FAISS binary index from %s (%d items)",
                     self._index_path, idx.ntotal,

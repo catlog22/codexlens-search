@@ -18,6 +18,9 @@ class FTSEngine:
         )
         self._conn.commit()
         self._migrate_line_columns()
+        self._migrate_language_column()
+        self._create_symbols_table()
+        self._create_symbol_refs_table()
 
     def _migrate_line_columns(self) -> None:
         """Add start_line/end_line columns if missing (for pre-existing DBs)."""
@@ -32,26 +35,283 @@ class FTSEngine:
                 )
         self._conn.commit()
 
+    def _migrate_language_column(self) -> None:
+        """Add language column if missing (for pre-existing DBs)."""
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(docs_meta)").fetchall()
+        }
+        if "language" not in cols:
+            self._conn.execute(
+                "ALTER TABLE docs_meta ADD COLUMN language TEXT DEFAULT ''"
+            )
+            self._conn.commit()
+
+    def _create_symbols_table(self) -> None:
+        """Create symbols table and indexes if they do not exist."""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS symbols ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "chunk_id INTEGER, "
+            "name TEXT NOT NULL, "
+            "kind TEXT NOT NULL, "
+            "start_line INTEGER, "
+            "end_line INTEGER, "
+            "parent_name TEXT, "
+            "signature TEXT, "
+            "language TEXT)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_symbols_chunk_id "
+            "ON symbols (chunk_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_symbols_name "
+            "ON symbols (name)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_symbols_kind "
+            "ON symbols (kind)"
+        )
+        self._conn.commit()
+
+    def _create_symbol_refs_table(self) -> None:
+        """Create symbol_refs table and indexes if they do not exist."""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS symbol_refs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "from_symbol_id INTEGER, "
+            "from_name TEXT NOT NULL, "
+            "from_path TEXT NOT NULL, "
+            "to_name TEXT NOT NULL, "
+            "to_symbol_id INTEGER, "
+            "ref_kind TEXT NOT NULL, "
+            "line INTEGER)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_from_id "
+            "ON symbol_refs (from_symbol_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_from_name "
+            "ON symbol_refs (from_name)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_to_name "
+            "ON symbol_refs (to_name)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_to_id "
+            "ON symbol_refs (to_symbol_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_kind "
+            "ON symbol_refs (ref_kind)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_refs_path "
+            "ON symbol_refs (from_path)"
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Symbol reference operations
+    # ------------------------------------------------------------------
+
+    def add_refs(
+        self,
+        refs: list[tuple[str, str, str, str, int]],
+    ) -> None:
+        """Batch-insert symbol references in a single transaction.
+
+        Each tuple: (from_name, from_path, to_name, ref_kind, line).
+        from_symbol_id and to_symbol_id are left NULL for later resolution.
+        """
+        if not refs:
+            return
+        self._conn.executemany(
+            "INSERT INTO symbol_refs "
+            "(from_name, from_path, to_name, ref_kind, line) "
+            "VALUES (?, ?, ?, ?, ?)",
+            refs,
+        )
+        self._conn.commit()
+
+    def delete_refs_by_path(self, path: str) -> int:
+        """Delete all outgoing references from a given file path.
+
+        Also invalidates incoming to_symbol_id for refs that point to
+        symbols defined in the deleted file.
+
+        Returns the number of deleted rows.
+        """
+        cursor = self._conn.execute(
+            "DELETE FROM symbol_refs WHERE from_path = ?", (path,)
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    def resolve_refs(self) -> int:
+        """Batch resolve to_symbol_id for unresolved references.
+
+        Links each ref's to_name to the id of a matching symbol in the
+        symbols table. Only updates rows where to_symbol_id IS NULL.
+
+        Returns the number of resolved references.
+        """
+        cursor = self._conn.execute(
+            "UPDATE symbol_refs SET to_symbol_id = ("
+            "  SELECT id FROM symbols WHERE symbols.name = symbol_refs.to_name LIMIT 1"
+            ") WHERE to_symbol_id IS NULL "
+            "AND EXISTS ("
+            "  SELECT 1 FROM symbols WHERE symbols.name = symbol_refs.to_name"
+            ")"
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
+    def get_refs_from(self, name: str) -> list[dict]:
+        """Get all references originating from a symbol name.
+
+        Returns list of dicts with keys: id, from_symbol_id, from_name,
+        from_path, to_name, to_symbol_id, ref_kind, line.
+        """
+        rows = self._conn.execute(
+            "SELECT id, from_symbol_id, from_name, from_path, "
+            "to_name, to_symbol_id, ref_kind, line "
+            "FROM symbol_refs WHERE from_name = ?",
+            (name,),
+        ).fetchall()
+        cols = (
+            "id", "from_symbol_id", "from_name", "from_path",
+            "to_name", "to_symbol_id", "ref_kind", "line",
+        )
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_refs_to(self, name: str) -> list[dict]:
+        """Get all references pointing to a symbol name.
+
+        Returns list of dicts with keys: id, from_symbol_id, from_name,
+        from_path, to_name, to_symbol_id, ref_kind, line.
+        """
+        rows = self._conn.execute(
+            "SELECT id, from_symbol_id, from_name, from_path, "
+            "to_name, to_symbol_id, ref_kind, line "
+            "FROM symbol_refs WHERE to_name = ?",
+            (name,),
+        ).fetchall()
+        cols = (
+            "id", "from_symbol_id", "from_name", "from_path",
+            "to_name", "to_symbol_id", "ref_kind", "line",
+        )
+        return [dict(zip(cols, row)) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Symbol operations
+    # ------------------------------------------------------------------
+
+    def add_symbols(
+        self,
+        symbols: list[tuple[int, str, str, int, int, str, str, str]],
+    ) -> None:
+        """Batch-insert symbols in a single transaction.
+
+        Each tuple: (chunk_id, name, kind, start_line, end_line,
+                      parent_name, signature, language).
+        """
+        if not symbols:
+            return
+        self._conn.executemany(
+            "INSERT INTO symbols "
+            "(chunk_id, name, kind, start_line, end_line, parent_name, signature, language) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            symbols,
+        )
+        self._conn.commit()
+
+    def get_symbols_by_name(
+        self, name: str, kind: str | None = None
+    ) -> list[dict]:
+        """Look up symbols by name, optionally filtered by kind.
+
+        Returns list of dicts with keys: id, chunk_id, name, kind,
+        start_line, end_line, parent_name, signature, language.
+        """
+        if kind is not None:
+            rows = self._conn.execute(
+                "SELECT id, chunk_id, name, kind, start_line, end_line, "
+                "parent_name, signature, language "
+                "FROM symbols WHERE name = ? AND kind = ?",
+                (name, kind),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, chunk_id, name, kind, start_line, end_line, "
+                "parent_name, signature, language "
+                "FROM symbols WHERE name = ?",
+                (name,),
+            ).fetchall()
+        cols = (
+            "id", "chunk_id", "name", "kind", "start_line", "end_line",
+            "parent_name", "signature", "language",
+        )
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_symbols_by_chunk(self, chunk_id: int) -> list[dict]:
+        """Return all symbols associated with a given chunk_id."""
+        rows = self._conn.execute(
+            "SELECT id, chunk_id, name, kind, start_line, end_line, "
+            "parent_name, signature, language "
+            "FROM symbols WHERE chunk_id = ?",
+            (chunk_id,),
+        ).fetchall()
+        cols = (
+            "id", "chunk_id", "name", "kind", "start_line", "end_line",
+            "parent_name", "signature", "language",
+        )
+        return [dict(zip(cols, row)) for row in rows]
+
+    def delete_symbols_by_chunk_ids(self, chunk_ids: list[int]) -> int:
+        """Delete all symbols associated with the given chunk IDs.
+
+        Returns the number of deleted rows.
+        """
+        if not chunk_ids:
+            return 0
+        placeholders = ",".join("?" for _ in chunk_ids)
+        cursor = self._conn.execute(
+            f"DELETE FROM symbols WHERE chunk_id IN ({placeholders})",
+            chunk_ids,
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def add_documents(self, docs: list[tuple]) -> None:
         """Add documents in batch.
 
-        docs: list of (id, path, content) or (id, path, content, start_line, end_line).
+        docs: list of (id, path, content)
+              or (id, path, content, start_line, end_line)
+              or (id, path, content, start_line, end_line, language).
         """
         if not docs:
             return
         meta_rows = []
         fts_rows = []
         for doc in docs:
-            if len(doc) >= 5:
+            if len(doc) >= 6:
+                doc_id, path, content = doc[0], doc[1], doc[2]
+                sl, el, lang = doc[3], doc[4], doc[5]
+            elif len(doc) >= 5:
                 doc_id, path, content, sl, el = doc[0], doc[1], doc[2], doc[3], doc[4]
+                lang = ""
             else:
                 doc_id, path, content = doc[0], doc[1], doc[2]
-                sl, el = 0, 0
-            meta_rows.append((doc_id, path, sl, el))
+                sl, el, lang = 0, 0, ""
+            meta_rows.append((doc_id, path, sl, el, lang))
             fts_rows.append((doc_id, content))
         self._conn.executemany(
-            "INSERT OR REPLACE INTO docs_meta (id, path, start_line, end_line) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO docs_meta (id, path, start_line, end_line, language) "
+            "VALUES (?, ?, ?, ?, ?)",
             meta_rows,
         )
         self._conn.executemany(
@@ -105,14 +365,30 @@ class FTSEngine:
         return [r[0] for r in rows]
 
     def delete_by_path(self, path: str) -> int:
-        """Delete all docs and docs_meta rows for a given file path.
+        """Delete all docs, docs_meta, symbols, and refs rows for a given file path.
+
+        Symbols and refs are deleted BEFORE chunks because FTS5 does not
+        support CASCADE constraints.
 
         Returns the number of deleted documents.
         """
         ids = self.get_chunk_ids_by_path(path)
         if not ids:
+            # Still clean up refs by path even when no chunks found
+            self._conn.execute(
+                "DELETE FROM symbol_refs WHERE from_path = ?", (path,)
+            )
+            self._conn.commit()
             return 0
         placeholders = ",".join("?" for _ in ids)
+        # Delete refs by path
+        self._conn.execute(
+            "DELETE FROM symbol_refs WHERE from_path = ?", (path,)
+        )
+        # Delete symbols first (no CASCADE in FTS5)
+        self._conn.execute(
+            f"DELETE FROM symbols WHERE chunk_id IN ({placeholders})", ids
+        )
         self._conn.execute(
             f"DELETE FROM docs WHERE rowid IN ({placeholders})", ids
         )
@@ -122,12 +398,12 @@ class FTSEngine:
         self._conn.commit()
         return len(ids)
 
-    def get_doc_meta(self, doc_id: int) -> tuple[str, int, int]:
-        """Return (path, start_line, end_line) for a doc_id."""
+    def get_doc_meta(self, doc_id: int) -> tuple[str, int, int, str]:
+        """Return (path, start_line, end_line, language) for a doc_id."""
         row = self._conn.execute(
-            "SELECT path, start_line, end_line FROM docs_meta WHERE id = ?",
+            "SELECT path, start_line, end_line, language FROM docs_meta WHERE id = ?",
             (doc_id,),
         ).fetchone()
         if row:
-            return row[0], row[1] or 0, row[2] or 0
-        return "", 0, 0
+            return row[0], row[1] or 0, row[2] or 0, row[3] or ""
+        return "", 0, 0, ""

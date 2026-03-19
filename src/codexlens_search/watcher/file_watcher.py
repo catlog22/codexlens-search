@@ -20,6 +20,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .events import ChangeType, FileEvent, WatcherConfig
+from .incremental_indexer import IncrementalIndexer
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +262,24 @@ class FileWatcher:
         if output:
             sys.stdout.write(output + "\n")
             sys.stdout.flush()
+
+    @classmethod
+    def create_with_indexer(
+        cls,
+        root_path: Path,
+        config: WatcherConfig,
+        indexer: IncrementalIndexer,
+    ) -> "FileWatcher":
+        """Create a FileWatcher wired to an IncrementalIndexer's async path.
+
+        Uses ``indexer.process_events_async()`` as the callback so that
+        events are debounced and batched within the indexer before
+        processing, preventing redundant per-file pipeline startups.
+
+        Example::
+
+            indexer = IncrementalIndexer(pipeline, root=root)
+            watcher = FileWatcher.create_with_indexer(root, config, indexer)
+            watcher.start()
+        """
+        return cls(root_path, config, indexer.process_events_async)

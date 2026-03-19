@@ -68,12 +68,21 @@ def get_adaptive_weights(intent: QueryIntent, base: dict | None = None) -> dict[
     """Return weights adapted to query intent."""
     weights = dict(base or DEFAULT_WEIGHTS)
     if intent == QueryIntent.CODE_SYMBOL:
-        weights["exact"] = 0.45
-        weights["vector"] = 0.35
+        weights["exact"] = 0.35
+        weights["fuzzy"] = 0.05
+        weights["vector"] = 0.25
+        weights["graph"] = 0.35
     elif intent == QueryIntent.NATURAL_LANGUAGE:
-        weights["vector"] = 0.65
-        weights["exact"] = 0.15
-    # MIXED: use weights as-is
+        weights["exact"] = 0.10
+        weights["fuzzy"] = 0.10
+        weights["vector"] = 0.70
+        weights["graph"] = 0.10
+    else:
+        # MIXED
+        weights["exact"] = 0.25
+        weights["fuzzy"] = 0.10
+        weights["vector"] = 0.45
+        weights["graph"] = 0.20
     return weights
 
 

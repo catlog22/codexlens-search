@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 class BinaryStore(BaseBinaryIndex):
     """Persistent binary vector store using numpy memmap.
 
+    .. deprecated::
+        Prefer ``FAISSBinaryIndex`` for binary coarse search. This class is
+        retained as a numpy-only fallback for environments where FAISS is not
+        available. New code should use ``create_binary_index()`` from
+        ``codexlens_search.core.factory`` which selects the best backend
+        automatically.
+
     Stores binary-quantized float32 vectors as packed uint8 arrays on disk.
     Supports fast coarse search via XOR + popcount Hamming distance.
     """

@@ -4,10 +4,13 @@ Ported from codex-lens v1 with simplifications:
 - Uses IndexingPipeline.index_file() / remove_file() directly
 - No v1-specific Config, ParserFactory, DirIndexStore dependencies
 - Per-file error isolation: one failure does not stop batch processing
+- Debounce batching: process_events_async() buffers events and flushes
+  after a configurable window to prevent redundant per-file pipeline startups
 """
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -60,6 +63,7 @@ class IncrementalIndexer:
         pipeline: IndexingPipeline,
         *,
         root: Optional[Path] = None,
+        debounce_window_ms: int = 500,
     ) -> None:
         """Initialize the incremental indexer.
 
@@ -67,9 +71,15 @@ class IncrementalIndexer:
             pipeline: The indexing pipeline with metadata store configured.
             root: Optional project root for computing relative paths.
                   If None, absolute paths are used as identifiers.
+            debounce_window_ms: Milliseconds to buffer events before flushing
+                in process_events_async(). Default 500ms.
         """
         self._pipeline = pipeline
         self._root = root
+        self._debounce_window_ms = debounce_window_ms
+        self._event_buffer: List[FileEvent] = []
+        self._buffer_lock = threading.Lock()
+        self._flush_timer: Optional[threading.Timer] = None
 
     def process_events(self, events: List[FileEvent]) -> BatchResult:
         """Process a batch of file events with per-file error isolation.
@@ -106,6 +116,52 @@ class IncrementalIndexer:
             )
 
         return result
+
+    def process_events_async(self, events: List[FileEvent]) -> None:
+        """Buffer events and flush after the debounce window expires.
+
+        Non-blocking: events are accumulated in an internal buffer.
+        When no new events arrive within *debounce_window_ms*, the buffer
+        is flushed and all accumulated events are processed as a single
+        batch via process_events().
+
+        Args:
+            events: List of file events to buffer.
+        """
+        with self._buffer_lock:
+            self._event_buffer.extend(events)
+
+            # Cancel previous timer and start a new one (true debounce)
+            if self._flush_timer is not None:
+                self._flush_timer.cancel()
+
+            self._flush_timer = threading.Timer(
+                self._debounce_window_ms / 1000.0,
+                self._flush_buffer,
+            )
+            self._flush_timer.daemon = True
+            self._flush_timer.start()
+
+    def _flush_buffer(self) -> None:
+        """Flush the event buffer and process all accumulated events."""
+        with self._buffer_lock:
+            if not self._event_buffer:
+                return
+            events = list(self._event_buffer)
+            self._event_buffer.clear()
+            self._flush_timer = None
+
+        # Deduplicate: keep the last event per path
+        seen: dict[Path, FileEvent] = {}
+        for event in events:
+            seen[event.path] = event
+        deduped = list(seen.values())
+
+        logger.debug(
+            "Flushing debounce buffer: %d events (%d after dedup)",
+            len(events), len(deduped),
+        )
+        self.process_events(deduped)
 
     def _handle_index(self, event: FileEvent, result: BatchResult) -> None:
         """Index a created or modified file."""

@@ -3,4 +3,9 @@ from __future__ import annotations
 from .metadata import MetadataStore
 from .pipeline import IndexingPipeline, IndexStats
 
-__all__ = ["IndexingPipeline", "IndexStats", "MetadataStore"]
+try:
+    from .gitignore import GitignoreAwareMatcher
+except ImportError:
+    pass
+
+__all__ = ["GitignoreAwareMatcher", "IndexingPipeline", "IndexStats", "MetadataStore"]

@@ -102,13 +102,20 @@ def _get_pipelines(project_path: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def search_code(project_path: str, query: str, top_k: int = 10) -> str:
+def search_code(
+    project_path: str, query: str, top_k: int = 10, quality: str = "auto"
+) -> str:
     """Semantic code search with hybrid fusion (vector + FTS + reranking).
 
     Args:
         project_path: Absolute path to the project root directory.
         query: Natural language or code search query.
         top_k: Maximum number of results to return (default 10).
+        quality: Search quality tier (default "auto"):
+            - "fast": FTS-only + rerank (no embedding needed, fastest)
+            - "balanced": FTS + binary coarse search + rerank
+            - "thorough": Full 2-stage vector + FTS + reranking (best quality)
+            - "auto": Uses "thorough" if vector index exists, else "fast"
 
     Returns:
         Search results as formatted text with file paths, line numbers, scores, and code snippets.
@@ -121,15 +128,75 @@ def search_code(project_path: str, query: str, top_k: int = 10) -> str:
     if not (db_path / "metadata.db").exists():
         return f"Error: no index found at {db_path}. Run index_project first."
 
+    valid_qualities = ("fast", "balanced", "thorough", "auto")
+    if quality not in valid_qualities:
+        return f"Error: invalid quality '{quality}'. Must be one of: {', '.join(valid_qualities)}"
+
     _, search, _ = _get_pipelines(project_path)
-    results = search.search(query, top_k=top_k)
+    results = search.search(query, top_k=top_k, quality=quality)
 
     if not results:
         return "No results found."
 
     lines = []
     for i, r in enumerate(results, 1):
-        lines.append(f"## Result {i} — {r.path} (L{r.line}-{r.end_line}, score: {r.score:.4f})")
+        lines.append(f"## Result {i} -- {r.path} (L{r.line}-{r.end_line}, score: {r.score:.4f})")
+        lines.append(f"```\n{r.content}\n```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def search_scope(
+    project_path: str,
+    query: str,
+    scope_path: str,
+    top_k: int = 10,
+    quality: str = "auto",
+) -> str:
+    """Search within a specific directory scope of a project.
+
+    Runs a normal search then filters results to only include files
+    under the specified scope path.
+
+    Args:
+        project_path: Absolute path to the project root directory.
+        query: Natural language or code search query.
+        scope_path: Relative directory path to limit search scope (e.g. "src/auth").
+        top_k: Maximum number of scoped results to return (default 10).
+        quality: Search quality tier ("fast", "balanced", "thorough", "auto").
+
+    Returns:
+        Search results filtered to the scope path.
+    """
+    root = Path(project_path).resolve()
+    if not root.is_dir():
+        return f"Error: project path not found: {root}"
+
+    db_path = _db_path_for_project(project_path)
+    if not (db_path / "metadata.db").exists():
+        return f"Error: no index found at {db_path}. Run index_project first."
+
+    # Normalize scope path for prefix matching
+    scope = scope_path.replace("\\", "/").strip("/")
+
+    _, search, _ = _get_pipelines(project_path)
+    # Fetch more results than top_k to account for filtering
+    all_results = search.search(query, top_k=top_k * 5, quality=quality)
+
+    # Filter by scope path prefix
+    scoped = [
+        r for r in all_results
+        if r.path.replace("\\", "/").startswith(scope + "/")
+        or r.path.replace("\\", "/") == scope
+    ]
+
+    if not scoped:
+        return f"No results found in scope '{scope_path}'."
+
+    lines = []
+    for i, r in enumerate(scoped[:top_k], 1):
+        lines.append(f"## Result {i} -- {r.path} (L{r.line}-{r.end_line}, score: {r.score:.4f})")
         lines.append(f"```\n{r.content}\n```")
         lines.append("")
     return "\n".join(lines)
@@ -272,6 +339,59 @@ async def index_update(
     return (
         f"Synced {stats.files_processed} files, "
         f"{stats.chunks_created} chunks in {stats.duration_seconds:.1f}s."
+    )
+
+
+@mcp.tool()
+def index_scope(
+    project_path: str,
+    scope_path: str,
+    glob_pattern: str = "**/*",
+    tier: str = "full",
+) -> str:
+    """Index a specific directory scope within a project.
+
+    Useful for quickly indexing a subdirectory (e.g. after editing files
+    in a specific module) without re-indexing the entire project.
+
+    Args:
+        project_path: Absolute path to the project root directory.
+        scope_path: Relative directory path to index (e.g. "src/auth").
+        glob_pattern: Glob pattern for files within scope (default "**/*").
+        tier: Indexing tier - "full" (default) runs full pipeline with
+              embedding, "fts_only" indexes text only (faster, no vectors).
+
+    Returns:
+        Indexing summary for the scoped directory.
+    """
+    root = Path(project_path).resolve()
+    if not root.is_dir():
+        return f"Error: project path not found: {root}"
+
+    scope_dir = root / scope_path
+    if not scope_dir.is_dir():
+        return f"Error: scope directory not found: {scope_dir}"
+
+    valid_tiers = ("full", "fts_only")
+    if tier not in valid_tiers:
+        return f"Error: invalid tier '{tier}'. Must be one of: {', '.join(valid_tiers)}"
+
+    indexing, _, _ = _get_pipelines(project_path)
+
+    file_paths = [
+        p for p in scope_dir.glob(glob_pattern)
+        if p.is_file() and not should_exclude(p.relative_to(root), DEFAULT_EXCLUDES)
+    ]
+
+    if not file_paths:
+        return f"No files found in {scope_path} matching '{glob_pattern}'."
+
+    stats = indexing.sync(file_paths, root=root, tier=tier)
+    tier_label = "FTS-only" if tier == "fts_only" else "full"
+    return (
+        f"Indexed {stats.files_processed} files ({tier_label}), "
+        f"{stats.chunks_created} chunks in {stats.duration_seconds:.1f}s. "
+        f"Scope: {scope_path}"
     )
 
 

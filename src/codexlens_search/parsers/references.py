@@ -283,10 +283,16 @@ def _extract_js_ts_refs(root_node, symbols: list[Symbol]) -> list[SymbolRef]:
                 if child.type == "class_heritage":
                     for heritage_child in child.children:
                         if heritage_child.type in ("extends_clause", "implements_clause"):
+                            # Wrapped in extends_clause/implements_clause (some grammars)
                             for sub in heritage_child.children:
                                 name = _extract_identifier_name(sub)
                                 if name and name not in _PRIMITIVE_TYPES and name not in ("extends", "implements"):
                                     refs.append(SymbolRef(class_name, name, "inherit", line))
+                        else:
+                            # Direct identifier under class_heritage (tree-sitter 0.23+)
+                            name = _extract_identifier_name(heritage_child)
+                            if name and name not in _PRIMITIVE_TYPES and name not in ("extends", "implements"):
+                                refs.append(SymbolRef(class_name, name, "inherit", line))
 
         # Type annotations (TypeScript)
         if ntype in ("type_annotation", "type_identifier", "generic_type"):
@@ -449,7 +455,14 @@ def _extract_java_refs(root_node, symbols: list[Symbol]) -> list[SymbolRef]:
             superclass = node.child_by_field_name("superclass")
             if superclass is not None:
                 name = _extract_identifier_name(superclass)
-                if name and name not in _PRIMITIVE_TYPES:
+                if name is None:
+                    # superclass node wraps extends keyword + type_identifier
+                    for sc_child in superclass.children:
+                        name = _extract_identifier_name(sc_child)
+                        if name and name not in _PRIMITIVE_TYPES:
+                            refs.append(SymbolRef(class_name, name, "inherit", line))
+                            break
+                elif name not in _PRIMITIVE_TYPES:
                     refs.append(SymbolRef(class_name, name, "inherit", line))
             interfaces = node.child_by_field_name("interfaces")
             if interfaces is not None:

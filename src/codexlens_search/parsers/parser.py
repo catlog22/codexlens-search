@@ -7,12 +7,35 @@ import threading
 logger = logging.getLogger(__name__)
 
 try:
-    from tree_sitter import Parser as TSParser
-    import tree_sitter_languages
+    from tree_sitter import Language as TSLanguage, Parser as TSParser
 
     _HAS_TREE_SITTER = True
 except ImportError:
     _HAS_TREE_SITTER = False
+
+# Individual grammar packages (tree-sitter 0.23+ modern approach)
+# Mapping: language name -> module that exposes a language() function
+_GRAMMAR_MODULES: dict[str, str] = {
+    "python": "tree_sitter_python",
+    "javascript": "tree_sitter_javascript",
+    "typescript": "tree_sitter_typescript",
+    "go": "tree_sitter_go",
+    "java": "tree_sitter_java",
+    "rust": "tree_sitter_rust",
+    "c": "tree_sitter_c",
+    "cpp": "tree_sitter_cpp",
+    "ruby": "tree_sitter_ruby",
+    "php": "tree_sitter_php",
+    "scala": "tree_sitter_scala",
+    "kotlin": "tree_sitter_kotlin",
+    "swift": "tree_sitter_swift",
+    "csharp": "tree_sitter_c_sharp",
+    "bash": "tree_sitter_bash",
+    "lua": "tree_sitter_lua",
+    "haskell": "tree_sitter_haskell",
+    "elixir": "tree_sitter_elixir",
+    "erlang": "tree_sitter_erlang",
+}
 
 
 class ASTParser:
@@ -54,15 +77,42 @@ class ASTParser:
                 self._unsupported.add(language)
                 return None
 
-            try:
-                lang_obj = tree_sitter_languages.get_language(language)
+            lang_obj = self._try_load_grammar(language)
+            if lang_obj is not None:
                 self._grammars[language] = lang_obj
                 logger.debug("Loaded tree-sitter grammar for %s", language)
                 return lang_obj
+
+            logger.debug("tree-sitter grammar not available for %s", language)
+            self._unsupported.add(language)
+            return None
+
+    @staticmethod
+    def _try_load_grammar(language: str):
+        """Try loading grammar via individual package, then tree-sitter-languages."""
+        # Strategy 1: Individual grammar package (modern, Python 3.13+ compatible)
+        mod_name = _GRAMMAR_MODULES.get(language)
+        if mod_name:
+            try:
+                import importlib
+
+                mod = importlib.import_module(mod_name)
+                lang_fn = getattr(mod, "language", None)
+                if lang_fn is not None:
+                    # tree-sitter-typescript exposes typescript/tsx as sub-attrs
+                    if language == "typescript" and hasattr(mod, "language_typescript"):
+                        return TSLanguage(mod.language_typescript())
+                    return TSLanguage(lang_fn())
             except Exception:
-                logger.debug("tree-sitter grammar not available for %s", language)
-                self._unsupported.add(language)
-                return None
+                pass
+
+        # Strategy 2: tree-sitter-languages bundle (legacy, broad coverage)
+        try:
+            import tree_sitter_languages  # type: ignore[import-untyped]
+
+            return tree_sitter_languages.get_language(language)
+        except Exception:
+            return None
 
     def parse(self, source: bytes, language: str):
         """Parse *source* bytes using the grammar for *language*.

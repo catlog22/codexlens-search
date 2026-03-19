@@ -97,7 +97,7 @@ async def search_code(
         project_path: Absolute path to the project root.
         query: Search query — code symbol name, natural language, or regex pattern.
         mode: Search mode:
-            - "auto": Hybrid search (FTS + vector + graph). Best for general queries.
+            - "auto": Hybrid search (FTS + vector + graph + regex parallel). Falls back to regex if no index.
             - "symbol": Find symbol definitions by name (class, function, method).
             - "refs": Find all references to a symbol (imports, calls, inheritance).
             - "regex": Exact regex pattern search via ripgrep. Searches live files.
@@ -115,11 +115,83 @@ async def search_code(
     if mode == "refs":
         return _search_refs(project_path, query)
 
-    # mode == "auto": hybrid search
-    db_path = _db_path_for_project(project_path)
-    if not (db_path / "metadata.db").exists():
-        return f"Error: no index found. Run index_project first."
+    # mode == "auto": hybrid search with parallel regex + fallback
+    return await _search_auto(project_path, query, top_k, scope)
 
+
+async def _search_auto(project_path: str, query: str, top_k: int, scope: str) -> str:
+    """Hybrid search with parallel regex supplement and no-index fallback."""
+    root = Path(project_path).resolve()
+    db_path = _db_path_for_project(project_path)
+    has_index = (db_path / "metadata.db").exists()
+    has_rg = shutil.which("rg") is not None
+
+    if not has_index and not has_rg:
+        return "Error: no index found and ripgrep (rg) not available. Run index_project or install rg."
+
+    # Run semantic + regex in parallel when both available; fallback otherwise
+    semantic_task = None
+    regex_task = None
+
+    loop = asyncio.get_event_loop()
+
+    if has_index:
+        semantic_task = loop.run_in_executor(None, _semantic_search, project_path, query, top_k, scope)
+    if has_rg:
+        regex_task = _search_regex(project_path, query, top_k, scope)
+
+    semantic_results: list[tuple[str, int, int, float, str, str]] = []  # (path, line, end_line, score, content, lang)
+    regex_results: list[tuple[str, int, str]] = []  # (path, line, text)
+
+    if semantic_task and regex_task:
+        semantic_results, regex_raw = await asyncio.gather(semantic_task, regex_task, return_exceptions=True)
+        if isinstance(semantic_results, BaseException):
+            log.warning("Semantic search failed, using regex only: %s", semantic_results)
+            semantic_results = []
+        if isinstance(regex_raw, BaseException):
+            log.warning("Regex search failed: %s", regex_raw)
+            regex_raw = ""
+        regex_results = _parse_regex_output(regex_raw) if isinstance(regex_raw, str) else []
+    elif semantic_task:
+        result = await semantic_task
+        semantic_results = result if not isinstance(result, BaseException) else []
+    elif regex_task:
+        regex_raw = await regex_task
+        regex_results = _parse_regex_output(regex_raw) if isinstance(regex_raw, str) else []
+
+    # Merge: semantic results first, then regex results deduped by (path, line)
+    seen: set[tuple[str, int]] = set()
+    lines: list[str] = []
+    count = 0
+
+    for path, line, end_line, score, content, lang in semantic_results:
+        if count >= top_k:
+            break
+        seen.add((path, line))
+        count += 1
+        lang_tag = f" [{lang}]" if lang else ""
+        lines.append(f"## {count}. {path} L{line}-{end_line} (score: {score:.4f}){lang_tag}")
+        lines.append(f"```\n{content}\n```\n")
+
+    for path, line_no, text in regex_results:
+        if count >= top_k:
+            break
+        if (path, line_no) in seen:
+            continue
+        seen.add((path, line_no))
+        count += 1
+        lines.append(f"## {count}. {path} L{line_no} [rg]")
+        lines.append(f"```\n{text}\n```\n")
+
+    if not lines:
+        return "No results found."
+    return "\n".join(lines)
+
+
+def _semantic_search(
+    project_path: str, query: str, top_k: int, scope: str,
+) -> list[tuple[str, int, int, float, str, str]]:
+    """Run semantic pipeline search (called in executor thread)."""
     _, search, _ = _get_pipelines(project_path)
     results = search.search(query, top_k=top_k * (3 if scope else 1), quality="auto")
 
@@ -127,15 +199,39 @@ async def search_code(
         norm_scope = scope.replace("\\", "/").strip("/")
         results = [r for r in results if r.path.replace("\\", "/").startswith(norm_scope + "/")]
 
-    if not results:
-        return "No results found."
+    return [
+        (r.path, r.line, r.end_line, r.score, r.content, getattr(r, "language", ""))
+        for r in results
+    ]
 
-    lines = []
-    for i, r in enumerate(results[:top_k], 1):
-        lang_tag = f" [{r.language}]" if getattr(r, "language", "") else ""
-        lines.append(f"## {i}. {r.path} L{r.line}-{r.end_line} (score: {r.score:.4f}){lang_tag}")
-        lines.append(f"```\n{r.content}\n```\n")
-    return "\n".join(lines)
+
+def _parse_regex_output(raw: str) -> list[tuple[str, int, str]]:
+    """Parse _search_regex formatted output into (path, line, text) tuples."""
+    results: list[tuple[str, int, str]] = []
+    if not raw or raw.startswith("Error:") or raw == "No results found.":
+        return results
+    current_path = ""
+    current_line = 0
+    for line in raw.split("\n"):
+        if line.startswith("## "):
+            # "## 1. path/file.py L42"
+            parts = line.split(". ", 1)
+            if len(parts) < 2:
+                continue
+            rest = parts[1]
+            tokens = rest.rsplit(" L", 1)
+            if len(tokens) == 2:
+                current_path = tokens[0]
+                try:
+                    current_line = int(tokens[1])
+                except ValueError:
+                    current_line = 0
+        elif line.startswith("```"):
+            continue
+        elif current_path and line:
+            results.append((current_path, current_line, line))
+            current_path = ""
+    return results
 
 
 def _search_symbol(project_path: str, name: str, top_k: int) -> str:

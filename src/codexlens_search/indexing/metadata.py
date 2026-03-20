@@ -91,7 +91,6 @@ class MetadataStore:
             "VALUES (?, ?, ?, ?)",
             (file_path, content_hash, mtime, file_size),
         )
-        self._conn.commit()
 
     def register_chunks(
         self, file_path: str, chunk_ids_and_hashes: list[tuple[int, str]]
@@ -109,6 +108,9 @@ class MetadataStore:
             "VALUES (?, ?, ?)",
             [(cid, file_path, chash) for cid, chash in chunk_ids_and_hashes],
         )
+
+    def flush(self) -> None:
+        """Commit pending writes to disk."""
         self._conn.commit()
 
     def mark_file_deleted(self, file_path: str) -> int:

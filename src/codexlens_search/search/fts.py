@@ -7,6 +7,7 @@ from pathlib import Path
 class FTSEngine:
     def __init__(self, db_path: str | Path) -> None:
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS docs "
             "USING fts5(content, tokenize='porter unicode61')"
@@ -135,7 +136,6 @@ class FTSEngine:
             "VALUES (?, ?, ?, ?, ?)",
             refs,
         )
-        self._conn.commit()
 
     def delete_refs_by_path(self, path: str) -> int:
         """Delete all outgoing references from a given file path.
@@ -227,7 +227,6 @@ class FTSEngine:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             symbols,
         )
-        self._conn.commit()
 
     def get_symbols_by_name(
         self, name: str, kind: str | None = None
@@ -318,7 +317,6 @@ class FTSEngine:
             "INSERT OR REPLACE INTO docs (rowid, content) VALUES (?, ?)",
             fts_rows,
         )
-        self._conn.commit()
 
     def exact_search(self, query: str, top_k: int = 50) -> list[tuple[int, float]]:
         """FTS5 MATCH query, return (id, bm25_score) sorted by score descending."""
@@ -397,6 +395,10 @@ class FTSEngine:
         )
         self._conn.commit()
         return len(ids)
+
+    def flush(self) -> None:
+        """Commit pending writes to disk."""
+        self._conn.commit()
 
     def get_doc_meta(self, doc_id: int) -> tuple[str, int, int, str]:
         """Return (path, start_line, end_line, language) for a doc_id."""

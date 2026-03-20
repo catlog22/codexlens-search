@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 
 from ..config import Config
@@ -19,28 +21,32 @@ class FastEmbedEmbedder(BaseEmbedder):
     def __init__(self, config: Config) -> None:
         self._config = config
         self._model = None
+        self._load_lock = threading.Lock()
 
     def _load(self) -> None:
-        """Lazy-load the fastembed TextEmbedding model on first use."""
+        """Lazy-load the fastembed TextEmbedding model on first use (thread-safe)."""
         if self._model is not None:
             return
-        from .. import model_manager
-        model_manager.ensure_model(self._config.embed_model, self._config)
+        with self._load_lock:
+            if self._model is not None:
+                return
+            from .. import model_manager
+            model_manager.ensure_model(self._config.embed_model, self._config)
 
-        from fastembed import TextEmbedding
-        providers = self._config.resolve_embed_providers()
-        cache_kwargs = model_manager.get_cache_kwargs(self._config)
-        try:
-            self._model = TextEmbedding(
-                model_name=self._config.embed_model,
-                providers=providers,
-                **cache_kwargs,
-            )
-        except TypeError:
-            self._model = TextEmbedding(
-                model_name=self._config.embed_model,
-                **cache_kwargs,
-            )
+            from fastembed import TextEmbedding
+            providers = self._config.resolve_embed_providers()
+            cache_kwargs = model_manager.get_cache_kwargs(self._config)
+            try:
+                self._model = TextEmbedding(
+                    model_name=self._config.embed_model,
+                    providers=providers,
+                    **cache_kwargs,
+                )
+            except TypeError:
+                self._model = TextEmbedding(
+                    model_name=self._config.embed_model,
+                    **cache_kwargs,
+                )
 
     def embed_single(self, text: str) -> np.ndarray:
         """Embed a single text, returns float32 ndarray of shape (dim,)."""

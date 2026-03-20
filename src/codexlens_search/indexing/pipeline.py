@@ -106,10 +106,15 @@ def is_file_excluded(
     file_path: Path,
     config: Config,
     gitignore_matcher: "GitignoreAwareMatcher | None" = None,
+    content: bytes | None = None,
 ) -> str | None:
     """Check if a file should be excluded from indexing.
 
     Returns exclusion reason string, or None if file should be indexed.
+
+    Args:
+        content: Optional pre-read file bytes. When provided, skips file I/O
+                 for binary detection and generated-code check.
     """
     # Gitignore check (when matcher is available)
     if gitignore_matcher is not None and gitignore_matcher.is_excluded(file_path):
@@ -134,21 +139,27 @@ def is_file_excluded(
         return "empty file"
 
     # Binary detection: sample first N bytes
-    try:
-        with open(file_path, "rb") as f:
-            sample = f.read(config.binary_detect_sample_bytes)
-    except OSError:
-        return "cannot read file"
+    if content is not None:
+        sample = content[:config.binary_detect_sample_bytes]
+    else:
+        try:
+            with open(file_path, "rb") as f:
+                sample = f.read(config.binary_detect_sample_bytes)
+        except OSError:
+            return "cannot read file"
     if sample:
         null_ratio = sample.count(b"\x00") / len(sample)
         if null_ratio > config.binary_null_threshold:
             return f"binary file (null ratio: {null_ratio:.2%})"
 
     # Generated code markers (check first 1KB of text)
-    try:
-        head = file_path.read_text(encoding="utf-8", errors="replace")[:1024]
-    except OSError:
-        return None  # can't check, let it through
+    if content is not None:
+        head = content[:1024].decode("utf-8", errors="replace")
+    else:
+        try:
+            head = file_path.read_text(encoding="utf-8", errors="replace")[:1024]
+        except OSError:
+            return None  # can't check, let it through
     for marker in config.generated_code_markers:
         if marker in head:
             return f"generated code marker: {marker}"
@@ -243,19 +254,24 @@ class IndexingPipeline:
                 worker_errors.append(exc)
 
         # --- Start workers ---
-        embed_thread = threading.Thread(
-            target=self._embed_worker,
-            args=(embed_queue, index_queue, _record_error),
-            daemon=True,
-            name="indexing-embed",
-        )
+        num_embed_workers = max(1, self._config.index_workers)
+        embed_remaining = [num_embed_workers, threading.Lock()]
+        embed_threads = []
+        for i in range(num_embed_workers):
+            t = threading.Thread(
+                target=self._embed_worker,
+                args=(embed_queue, index_queue, _record_error, embed_remaining),
+                daemon=True,
+                name=f"indexing-embed-{i}",
+            )
+            t.start()
+            embed_threads.append(t)
         index_thread = threading.Thread(
             target=self._index_worker,
             args=(index_queue, _record_error),
             daemon=True,
             name="indexing-index",
         )
-        embed_thread.start()
         index_thread.start()
 
         # --- Stage 1: chunk files (main thread) ---
@@ -266,16 +282,20 @@ class IndexingPipeline:
         all_refs: list[tuple[str, str, str, str, int]] = []
 
         for fpath in files:
-            # Noise file filter
-            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
-            if exclude_reason:
-                logger.debug("Skipping %s: %s", fpath, exclude_reason)
-                continue
+            # Read file once, reuse for exclusion checks and chunking
             try:
-                text = fpath.read_text(encoding="utf-8", errors="replace")
+                raw = fpath.read_bytes()
             except Exception as exc:
                 logger.debug("Skipping %s: %s", fpath, exc)
                 continue
+
+            # Noise file filter (pass pre-read content to avoid redundant I/O)
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root), content=raw)
+            if exclude_reason:
+                logger.debug("Skipping %s: %s", fpath, exclude_reason)
+                continue
+
+            text = raw.decode("utf-8", errors="replace")
 
             rel_path = str(fpath.relative_to(root)) if root else str(fpath)
             file_chunks = self._smart_chunk(text, rel_path, max_chunk_chars, chunk_overlap)
@@ -313,11 +333,13 @@ class IndexingPipeline:
                 ref_rows = self._extract_file_refs(text, file_lang, rel_path)
                 all_refs.extend(ref_rows)
 
-        # Signal embed worker: no more data
-        embed_queue.put(_SENTINEL)
+        # Signal all embed workers: no more data (one sentinel per worker)
+        for _ in range(num_embed_workers):
+            embed_queue.put(_SENTINEL)
 
         # Wait for workers to finish
-        embed_thread.join()
+        for t in embed_threads:
+            t.join()
         index_thread.join()
 
         # --- Final flush ---
@@ -332,6 +354,9 @@ class IndexingPipeline:
         if all_refs:
             self._fts.add_refs(all_refs)
             self._fts.resolve_refs()
+
+        # Final commit for symbols/refs
+        self._fts.flush()
 
         duration = time.monotonic() - t0
         stats = IndexStats(
@@ -362,8 +387,43 @@ class IndexingPipeline:
         in_q: queue.Queue,
         out_q: queue.Queue,
         on_error: callable,
+        remaining_counter: list | None = None,
     ) -> None:
-        """Stage 2: Pull chunk batches, embed, push (ids, vecs, docs) to index queue."""
+        """Stage 2: Pull chunk batches, embed, push (ids, vecs, docs) to index queue.
+
+        Accumulates chunks across queue items to form uniform batches of
+        embed_batch_size before calling embed_batch(), improving GPU/CPU
+        utilization.
+
+        Args:
+            remaining_counter: [count, lock] — shared across embed workers.
+                When the last worker finishes, it sends the sentinel to out_q.
+        """
+        batch_size = self._config.embed_batch_size
+        # Accumulation buffer
+        acc_ids: list[int] = []
+        acc_texts: list[str] = []
+        acc_paths: list[str] = []
+        acc_lines: list[tuple[int, int]] = []
+        acc_langs: list[str] = []
+
+        def _flush_acc() -> None:
+            if not acc_ids:
+                return
+            try:
+                vecs = self._embedder.embed_batch(acc_texts)
+                vec_array = np.array(vecs, dtype=np.float32)
+                id_array = np.array(acc_ids, dtype=np.int64)
+                out_q.put((id_array, vec_array, list(acc_texts), list(acc_paths), list(acc_lines), list(acc_langs)))
+            except Exception as exc:
+                logger.error("Embed worker error: %s", exc)
+                on_error(exc)
+            acc_ids.clear()
+            acc_texts.clear()
+            acc_paths.clear()
+            acc_lines.clear()
+            acc_langs.clear()
+
         try:
             while True:
                 item = in_q.get()
@@ -371,17 +431,29 @@ class IndexingPipeline:
                     break
 
                 batch_ids, batch_texts, batch_paths, batch_lines, batch_langs = item
-                try:
-                    vecs = self._embedder.embed_batch(batch_texts)
-                    vec_array = np.array(vecs, dtype=np.float32)
-                    id_array = np.array(batch_ids, dtype=np.int64)
-                    out_q.put((id_array, vec_array, batch_texts, batch_paths, batch_lines, batch_langs))
-                except Exception as exc:
-                    logger.error("Embed worker error: %s", exc)
-                    on_error(exc)
+                for i in range(len(batch_ids)):
+                    acc_ids.append(batch_ids[i])
+                    acc_texts.append(batch_texts[i])
+                    acc_paths.append(batch_paths[i])
+                    acc_lines.append(batch_lines[i])
+                    acc_langs.append(batch_langs[i])
+                    if len(acc_ids) >= batch_size:
+                        _flush_acc()
+
+            # Flush remaining buffered chunks on sentinel
+            _flush_acc()
+        except Exception as exc:
+            logger.error("Embed worker error: %s", exc)
+            on_error(exc)
         finally:
-            # Signal index worker: no more data
-            out_q.put(_SENTINEL)
+            # Only the last embed worker to finish sends sentinel to index queue
+            if remaining_counter is not None:
+                with remaining_counter[1]:
+                    remaining_counter[0] -= 1
+                    if remaining_counter[0] == 0:
+                        out_q.put(_SENTINEL)
+            else:
+                out_q.put(_SENTINEL)
 
     def _index_worker(
         self,
@@ -405,6 +477,8 @@ class IndexingPipeline:
                     for i in range(len(id_array))
                 ]
                 self._fts.add_documents(fts_docs)
+                # Batch commit after each queue item
+                self._fts.flush()
             except Exception as exc:
                 logger.error("Index worker error: %s", exc)
                 on_error(exc)
@@ -733,15 +807,19 @@ class IndexingPipeline:
         chunks_created = 0
 
         for fpath in files:
-            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
-            if exclude_reason:
-                logger.debug("Skipping %s: %s", fpath, exclude_reason)
-                continue
+            # Read file once, reuse for exclusion checks and chunking
             try:
-                text = fpath.read_text(encoding="utf-8", errors="replace")
+                raw = fpath.read_bytes()
             except Exception as exc:
                 logger.debug("Skipping %s: %s", fpath, exc)
                 continue
+
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root), content=raw)
+            if exclude_reason:
+                logger.debug("Skipping %s: %s", fpath, exclude_reason)
+                continue
+
+            text = raw.decode("utf-8", errors="replace")
 
             rel_path = str(fpath.relative_to(root)) if root else str(fpath)
             content_hash = self._content_hash(text)
@@ -766,9 +844,12 @@ class IndexingPipeline:
             chunk_id_hashes = []
             file_chunk_ids: list[int] = []
             file_chunk_lines: list[tuple[int, int]] = []
-            for chunk_text, path, sl, el, lang in file_chunks:
+            for i, (chunk_text, path, sl, el, lang) in enumerate(file_chunks):
                 fts_docs.append((chunk_id, path, chunk_text, sl, el, lang))
-                chunk_id_hashes.append((chunk_id, self._content_hash(chunk_text)))
+                if self._config.skip_chunk_hash:
+                    chunk_id_hashes.append((chunk_id, f"{content_hash}:{i}"))
+                else:
+                    chunk_id_hashes.append((chunk_id, self._content_hash(chunk_text)))
                 file_chunk_ids.append(chunk_id)
                 file_chunk_lines.append((sl, el))
                 chunk_id += 1
@@ -796,6 +877,10 @@ class IndexingPipeline:
 
         # Resolve all refs after all files are processed
         self._fts.resolve_refs()
+
+        # Final commit
+        self._fts.flush()
+        meta.flush()
 
         duration = time.monotonic() - t0
         stats = IndexStats(
@@ -838,18 +923,20 @@ class IndexingPipeline:
         meta = self._require_metadata()
         t0 = time.monotonic()
 
-        # Noise file filter
-        exclude_reason = is_file_excluded(file_path, self._config, self._get_gitignore_matcher(root))
+        # Read file once, reuse for exclusion checks and chunking
+        try:
+            raw = file_path.read_bytes()
+        except Exception as exc:
+            logger.debug("Skipping %s: %s", file_path, exc)
+            return IndexStats(duration_seconds=round(time.monotonic() - t0, 2))
+
+        # Noise file filter (pass pre-read content to avoid redundant I/O)
+        exclude_reason = is_file_excluded(file_path, self._config, self._get_gitignore_matcher(root), content=raw)
         if exclude_reason:
             logger.debug("Skipping %s: %s", file_path, exclude_reason)
             return IndexStats(duration_seconds=round(time.monotonic() - t0, 2))
 
-        # Read file
-        try:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:
-            logger.debug("Skipping %s: %s", file_path, exc)
-            return IndexStats(duration_seconds=round(time.monotonic() - t0, 2))
+        text = raw.decode("utf-8", errors="replace")
 
         content_hash = self._content_hash(text)
         rel_path = str(file_path.relative_to(root)) if root else str(file_path)
@@ -921,13 +1008,21 @@ class IndexingPipeline:
         # Register in metadata
         st = file_path.stat()
         meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
-        chunk_id_hashes = [
-            (batch_ids[i], self._content_hash(batch_texts[i]))
-            for i in range(len(batch_ids))
-        ]
+        if self._config.skip_chunk_hash:
+            chunk_id_hashes = [
+                (batch_ids[i], f"{content_hash}:{i}")
+                for i in range(len(batch_ids))
+            ]
+        else:
+            chunk_id_hashes = [
+                (batch_ids[i], self._content_hash(batch_texts[i]))
+                for i in range(len(batch_ids))
+            ]
         meta.register_chunks(rel_path, chunk_id_hashes)
 
-        # Flush stores
+        # Flush all stores
+        self._fts.flush()
+        meta.flush()
         self._binary_store.save()
         self._ann_index.save()
 
@@ -1132,17 +1227,22 @@ class IndexingPipeline:
             with error_lock:
                 worker_errors.append(exc)
 
-        embed_thread = threading.Thread(
-            target=self._embed_worker,
-            args=(embed_queue, index_queue, _record_error),
-            daemon=True, name="sync-embed",
-        )
+        num_embed_workers = max(1, self._config.index_workers)
+        embed_remaining = [num_embed_workers, threading.Lock()]
+        embed_threads = []
+        for i in range(num_embed_workers):
+            t = threading.Thread(
+                target=self._embed_worker,
+                args=(embed_queue, index_queue, _record_error, embed_remaining),
+                daemon=True, name=f"sync-embed-{i}",
+            )
+            t.start()
+            embed_threads.append(t)
         index_thread = threading.Thread(
             target=self._index_worker,
             args=(index_queue, _record_error),
             daemon=True, name="sync-index",
         )
-        embed_thread.start()
         index_thread.start()
 
         chunk_id = start_chunk_id
@@ -1174,19 +1274,23 @@ class IndexingPipeline:
                 buf_tokens = 0
 
         for fpath in files:
-            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root))
-            if exclude_reason:
-                logger.debug("Skipping %s: %s", fpath, exclude_reason)
-                if progress_callback:
-                    progress_callback(files_processed, total_files)
-                continue
+            # Read file once, reuse for exclusion checks and chunking
             try:
-                text = fpath.read_text(encoding="utf-8", errors="replace")
+                raw = fpath.read_bytes()
             except Exception as exc:
                 logger.debug("Skipping %s: %s", fpath, exc)
                 if progress_callback:
                     progress_callback(files_processed, total_files)
                 continue
+
+            exclude_reason = is_file_excluded(fpath, self._config, self._get_gitignore_matcher(root), content=raw)
+            if exclude_reason:
+                logger.debug("Skipping %s: %s", fpath, exclude_reason)
+                if progress_callback:
+                    progress_callback(files_processed, total_files)
+                continue
+
+            text = raw.decode("utf-8", errors="replace")
 
             rel_path = str(fpath.relative_to(root)) if root else str(fpath)
             content_hash = self._content_hash(text)
@@ -1236,9 +1340,15 @@ class IndexingPipeline:
             # Register metadata per file
             st = fpath.stat()
             meta.register_file(rel_path, content_hash, st.st_mtime, st.st_size)
-            chunk_id_hashes = [
-                (cid, self._content_hash(ct)) for cid, ct in file_chunk_ids
-            ]
+            if self._config.skip_chunk_hash:
+                chunk_id_hashes = [
+                    (cid, f"{content_hash}:{i}")
+                    for i, (cid, _ct) in enumerate(file_chunk_ids)
+                ]
+            else:
+                chunk_id_hashes = [
+                    (cid, self._content_hash(ct)) for cid, ct in file_chunk_ids
+                ]
             meta.register_chunks(rel_path, chunk_id_hashes)
 
             if progress_callback:
@@ -1247,8 +1357,10 @@ class IndexingPipeline:
         # Final flush for remaining chunks
         _flush_buffer()
 
-        embed_queue.put(_SENTINEL)
-        embed_thread.join()
+        for _ in range(num_embed_workers):
+            embed_queue.put(_SENTINEL)
+        for t in embed_threads:
+            t.join()
         index_thread.join()
 
         self._binary_store.save()
@@ -1262,6 +1374,10 @@ class IndexingPipeline:
         if all_refs:
             self._fts.add_refs(all_refs)
             self._fts.resolve_refs()
+
+        # Final commit for symbols/refs and metadata
+        self._fts.flush()
+        meta.flush()
 
         duration = time.monotonic() - t0
 

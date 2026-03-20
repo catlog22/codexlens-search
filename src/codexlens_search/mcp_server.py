@@ -28,9 +28,11 @@ Run: codexlens-mcp  or  python -m codexlens_search.mcp_server
 """
 from __future__ import annotations
 
+import atexit
 import asyncio
 import json
 import logging
+import os
 import shutil
 import threading
 from pathlib import Path
@@ -50,10 +52,122 @@ mcp = FastMCP("codexlens-search")
 
 _pipelines: dict[str, tuple] = {}
 _lock = threading.Lock()
+_bg_indexing: dict[str, threading.Thread] = {}
+_watchers: dict[str, "FileWatcher"] = {}
+_watcher_lock = threading.Lock()
 
 
 def _db_path_for_project(project_path: str) -> Path:
     return Path(project_path).resolve() / ".codexlens"
+
+
+def _trigger_background_index(project_path: str) -> str:
+    """Trigger background indexing if not already in progress. Returns notice string."""
+    resolved = str(Path(project_path).resolve())
+
+    with _lock:
+        if resolved in _bg_indexing:
+            thread = _bg_indexing[resolved]
+            if thread.is_alive():
+                return (
+                    "**Note**: Index is being built in the background. "
+                    "Showing regex results only. Re-search after indexing completes."
+                )
+            else:
+                del _bg_indexing[resolved]
+
+    def _do_index():
+        try:
+            log.info("Background indexing started for: %s", resolved)
+            root = Path(resolved)
+            indexing, _, _ = _get_pipelines(project_path)
+            file_paths = [
+                p for p in root.glob("**/*")
+                if p.is_file() and not should_exclude(p.relative_to(root), DEFAULT_EXCLUDES)
+            ]
+            indexing.sync(file_paths, root=root)
+            # Invalidate pipeline cache so next search uses fresh index
+            with _lock:
+                _pipelines.pop(resolved, None)
+            log.info("Background indexing complete for %s: %d files", resolved, len(file_paths))
+            # Auto-start watcher after background indexing
+            _ensure_watcher(project_path)
+        except Exception as exc:
+            log.error("Background indexing failed for %s: %s", resolved, exc)
+        finally:
+            with _lock:
+                _bg_indexing.pop(resolved, None)
+
+    thread = threading.Thread(target=_do_index, daemon=True, name=f"bg-index-{resolved[-20:]}")
+    with _lock:
+        _bg_indexing[resolved] = thread
+    thread.start()
+
+    return (
+        "**Note**: No index found. Background indexing started automatically. "
+        "Showing regex results for now. Re-search after indexing completes for semantic results."
+    )
+
+
+def _ensure_watcher(project_path: str) -> str | None:
+    """Start file watcher for a project. Returns status message or None."""
+    if not os.environ.get("CODEXLENS_AUTO_WATCH", "").lower() in ("true", "1", "yes"):
+        return None
+
+    resolved = str(Path(project_path).resolve())
+    with _watcher_lock:
+        existing = _watchers.get(resolved)
+        if existing is not None and existing.is_running:
+            return None  # already watching
+
+    try:
+        from codexlens_search.watcher import FileWatcher, IncrementalIndexer, WatcherConfig
+    except ImportError:
+        log.debug("watchdog not installed, skipping watcher")
+        return None
+
+    try:
+        indexing, _, _ = _get_pipelines(project_path)
+        root = Path(resolved)
+        indexer = IncrementalIndexer(indexing, root=root)
+        watcher_config = WatcherConfig(
+            debounce_ms=int(os.environ.get("CODEXLENS_WATCHER_DEBOUNCE_MS", "1000")),
+        )
+        watcher = FileWatcher.create_with_indexer(root, watcher_config, indexer)
+        watcher.start()
+        with _watcher_lock:
+            _watchers[resolved] = watcher
+        log.info("Started file watcher for: %s", resolved)
+        return f"File watcher started for {resolved}"
+    except Exception as exc:
+        log.warning("Failed to start watcher for %s: %s", resolved, exc)
+        return None
+
+
+def _stop_watcher(project_path: str) -> str:
+    """Stop file watcher for a project."""
+    resolved = str(Path(project_path).resolve())
+    with _watcher_lock:
+        watcher = _watchers.pop(resolved, None)
+    if watcher is not None:
+        watcher.stop()
+        log.info("Stopped file watcher for: %s", resolved)
+        return f"File watcher stopped for {resolved}"
+    return f"No active watcher for {resolved}"
+
+
+def _cleanup_watchers() -> None:
+    """Stop all watchers on process exit."""
+    with _watcher_lock:
+        for resolved, watcher in list(_watchers.items()):
+            try:
+                watcher.stop()
+            except Exception:
+                pass
+        _watchers.clear()
+
+
+atexit.register(_cleanup_watchers)
 
 
 def _get_pipelines(project_path: str, force: bool = False) -> tuple:
@@ -128,6 +242,11 @@ async def _search_auto(project_path: str, query: str, top_k: int, scope: str) ->
     if not has_index and not has_rg:
         return "Error: no index found and ripgrep (rg) not available. Run index_project or install rg."
 
+    # Trigger background indexing if no index exists
+    indexing_notice = ""
+    if not has_index:
+        indexing_notice = _trigger_background_index(project_path)
+
     # Run semantic + regex in parallel when both available; fallback otherwise
     semantic_task = None
     regex_task = None
@@ -183,8 +302,14 @@ async def _search_auto(project_path: str, query: str, top_k: int, scope: str) ->
         lines.append(f"```\n{text}\n```\n")
 
     if not lines:
+        if indexing_notice:
+            return indexing_notice + "\n\nNo results found."
         return "No results found."
-    return "\n".join(lines)
+
+    result = "\n".join(lines)
+    if indexing_notice:
+        result = indexing_notice + "\n\n" + result
+    return result
 
 
 def _semantic_search(
@@ -437,6 +562,9 @@ async def index_project(
     with _lock:
         _pipelines.pop(str(root), None)
 
+    # Auto-start watcher after successful indexing
+    _ensure_watcher(project_path)
+
     scope_label = f" (scope: {scope})" if scope else ""
     return (
         f"Indexed {stats.files_processed} files, "
@@ -520,6 +648,41 @@ def find_files(
     if len(matches) >= max_results:
         header += f" (limited to {max_results})"
     return header + ":\n" + "\n".join(matches)
+
+
+# ---------------------------------------------------------------------------
+# Tool 4: watch_project — manage file watcher
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def watch_project(
+    project_path: str,
+    action: str = "status",
+) -> str:
+    """Manage file watcher for automatic re-indexing on file changes.
+
+    Args:
+        project_path: Absolute path to the project root.
+        action: "start" -- start watching, "stop" -- stop watching,
+                "status" -- check watcher status (default).
+    """
+    resolved = str(Path(project_path).resolve())
+
+    if action == "start":
+        # Force enable watcher regardless of env
+        os.environ["CODEXLENS_AUTO_WATCH"] = "true"
+        result = _ensure_watcher(project_path)
+        return result or "Watcher already running"
+
+    if action == "stop":
+        return _stop_watcher(project_path)
+
+    # status
+    with _watcher_lock:
+        watcher = _watchers.get(resolved)
+    if watcher is not None and watcher.is_running:
+        return f"Watcher: RUNNING for {resolved}"
+    return f"Watcher: STOPPED for {resolved}"
 
 
 # ---------------------------------------------------------------------------

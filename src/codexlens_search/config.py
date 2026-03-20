@@ -56,6 +56,7 @@ class Config:
 
     # Indexing pipeline
     index_workers: int = 2  # number of parallel indexing workers
+    skip_chunk_hash: bool = True  # use sequential chunk ID instead of SHA-256 per chunk
 
     # HNSW index (ANNIndex)
     hnsw_ef: int = 150

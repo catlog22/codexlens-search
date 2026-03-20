@@ -24,7 +24,7 @@ class ANNIndex(BaseANNIndex):
     Lazy-loads on first use, thread-safe via RLock.
     """
 
-    def __init__(self, path: str | Path, dim: int, config: Config) -> None:
+    def __init__(self, path: str | Path, dim: int, config: Config, initial_capacity: int = 1000) -> None:
         if not _HNSWLIB_AVAILABLE:
             raise ImportError("hnswlib is required. Install with: pip install hnswlib")
 
@@ -32,6 +32,7 @@ class ANNIndex(BaseANNIndex):
         self._hnsw_path = self._path / "ann_index.hnsw"
         self._dim = dim
         self._config = config
+        self._initial_capacity = initial_capacity
         self._lock = threading.RLock()
         self._index: hnswlib.Index | None = None
 
@@ -59,7 +60,7 @@ class ANNIndex(BaseANNIndex):
                 logger.debug("Loaded HNSW index from %s (%d items)", self._hnsw_path, idx.get_current_count())
             else:
                 idx.init_index(
-                    max_elements=1000,
+                    max_elements=self._initial_capacity,
                     ef_construction=self._config.hnsw_ef_construction,
                     M=self._config.hnsw_M,
                 )

@@ -100,6 +100,8 @@ class Shard:
         if not self._loaded:
             return
 
+        if self._fts is not None:
+            self._fts.close()
         if self._metadata is not None:
             self._metadata.close()
 

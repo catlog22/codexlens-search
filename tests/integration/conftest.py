@@ -7,6 +7,7 @@ from codexlens_search.config import Config
 from codexlens_search.core import ANNIndex, BinaryStore
 from codexlens_search.embed.base import BaseEmbedder
 from codexlens_search.rerank.base import BaseReranker
+from codexlens_search.indexing.metadata import MetadataStore
 from codexlens_search.search.fts import FTSEngine
 from codexlens_search.search.pipeline import SearchPipeline
 
@@ -82,6 +83,30 @@ def config():
 
 
 @pytest.fixture
+def mock_embedder():
+    return MockEmbedder()
+
+
+@pytest.fixture
+def mock_reranker():
+    return MockReranker()
+
+
+@pytest.fixture
+def fts_engine(tmp_path):
+    fts = FTSEngine(tmp_path / "fts.db")
+    yield fts
+    fts.close()
+
+
+@pytest.fixture
+def metadata_store(tmp_path):
+    store = MetadataStore(tmp_path / "metadata.db")
+    yield store
+    store.close()
+
+
+@pytest.fixture
 def search_pipeline(tmp_path, config):
     """Build a full SearchPipeline with 20 test docs indexed."""
     embedder = MockEmbedder()
@@ -98,7 +123,7 @@ def search_pipeline(tmp_path, config):
     ann_index.add(ids, vectors)
     fts.add_documents(TEST_DOCS)
 
-    return SearchPipeline(
+    pipeline = SearchPipeline(
         embedder=embedder,
         binary_store=binary_store,
         ann_index=ann_index,
@@ -106,3 +131,5 @@ def search_pipeline(tmp_path, config):
         fts=fts,
         config=config,
     )
+    yield pipeline
+    pipeline.close()

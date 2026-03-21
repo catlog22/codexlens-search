@@ -59,6 +59,14 @@ class ShardManager:
     def num_shards(self) -> int:
         return self._num_shards
 
+    def close(self) -> None:
+        """Unload all shards and release resources."""
+        with self._lru_lock:
+            for shard in self._shards.values():
+                if shard.is_loaded:
+                    shard.unload()
+            self._loaded_order.clear()
+
     def route_file(self, path: str) -> int:
         """Deterministically route a file path to a shard ID.
 

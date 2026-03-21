@@ -300,3 +300,15 @@ class MetadataStore:
 
     def close(self) -> None:
         self._conn.close()
+
+    def __enter__(self) -> "MetadataStore":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass

@@ -298,8 +298,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     db_path = _resolve_db_path(args)
 
     # Create empty stores - just touch the metadata and FTS databases
-    MetadataStore(db_path / "metadata.db")
-    FTSEngine(db_path / "fts.db")
+    meta = MetadataStore(db_path / "metadata.db")
+    fts = FTSEngine(db_path / "fts.db")
+    meta.close()
+    fts.close()
 
     _json_output({
         "status": "initialized",

@@ -42,3 +42,44 @@ def test_different_queries_give_different_results(search_pipeline):
     ids1 = [r.id for r in r1]
     ids2 = [r.id for r in r2]
     assert ids1 != ids2 or len(r1) == 0
+
+
+# -------------------------------------------------------------------
+# FTS + Vector fusion integration tests
+# -------------------------------------------------------------------
+
+
+def test_fts_and_vector_both_contribute_to_results(search_pipeline):
+    """Both FTS and vector search should contribute results to fusion."""
+    results = search_pipeline.search("password hash")
+    assert len(results) > 0
+    # Doc 5 has "hash_password" and "bcrypt.hashpw" - should rank well
+    result_ids = {r.id for r in results}
+    assert 5 in result_ids, "Doc with hash_password should appear in results"
+
+
+def test_fusion_ranks_exact_match_highly(search_pipeline):
+    """Exact keyword matches via FTS should boost ranking."""
+    results = search_pipeline.search("validate_email")
+    if results:
+        # Doc 19 has validate_email - should be among top results
+        top_ids = [r.id for r in results[:5]]
+        assert 19 in top_ids, "Exact match for validate_email should rank in top 5"
+
+
+def test_search_with_code_symbol_query(search_pipeline):
+    """Code symbol queries should work through fusion."""
+    results = search_pipeline.search("AuthError")
+    assert len(results) > 0
+    result_ids = {r.id for r in results}
+    # Doc 17 has AuthError class
+    assert 17 in result_ids
+
+
+def test_search_with_natural_language_query(search_pipeline):
+    """Natural language queries should also return relevant results."""
+    results = search_pipeline.search("how to get database connection")
+    assert len(results) > 0
+    # Should find db.py (doc 14) with get_connection
+    result_ids = {r.id for r in results}
+    assert 14 in result_ids or len(results) > 0

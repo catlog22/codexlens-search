@@ -58,6 +58,13 @@ class SearchPipeline:
         self._metadata_store = metadata_store
         self._graph_searcher = graph_searcher
 
+    def close(self) -> None:
+        """Close owned FTS and metadata connections."""
+        if self._fts is not None:
+            self._fts.close()
+        if self._metadata_store is not None:
+            self._metadata_store.close()
+
     # -- Helper: check if vector index has data ----------------------------
 
     def _has_vector_index(self) -> bool:

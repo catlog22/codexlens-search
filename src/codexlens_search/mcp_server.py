@@ -57,6 +57,21 @@ _watchers: dict[str, "FileWatcher"] = {}
 _watcher_lock = threading.Lock()
 
 
+def _close_pipeline(pipeline_tuple: tuple) -> None:
+    """Close resources held by a pipeline tuple (indexing, search, config).
+
+    In sharded mode both components are the same ShardManager (with close()).
+    In single-shard mode the search pipeline (index 1) owns FTS/metadata.
+    We only close the search pipeline to avoid double-closing shared resources.
+    """
+    search = pipeline_tuple[1] if len(pipeline_tuple) > 1 else None
+    if search is not None and hasattr(search, "close"):
+        try:
+            search.close()
+        except Exception:
+            pass
+
+
 def _db_path_for_project(project_path: str) -> Path:
     return Path(project_path).resolve() / ".codexlens"
 
@@ -88,7 +103,9 @@ def _trigger_background_index(project_path: str) -> str:
             indexing.sync(file_paths, root=root)
             # Invalidate pipeline cache so next search uses fresh index
             with _lock:
-                _pipelines.pop(resolved, None)
+                old = _pipelines.pop(resolved, None)
+            if old:
+                _close_pipeline(old)
             log.info("Background indexing complete for %s: %d files", resolved, len(file_paths))
             # Auto-start watcher after background indexing
             _ensure_watcher(project_path)
@@ -167,14 +184,25 @@ def _cleanup_watchers() -> None:
         _watchers.clear()
 
 
+def _cleanup_pipelines() -> None:
+    """Close all cached pipelines on process exit."""
+    with _lock:
+        for pipeline_tuple in _pipelines.values():
+            _close_pipeline(pipeline_tuple)
+        _pipelines.clear()
+
+
 atexit.register(_cleanup_watchers)
+atexit.register(_cleanup_pipelines)
 
 
 def _get_pipelines(project_path: str, force: bool = False) -> tuple:
     resolved = str(Path(project_path).resolve())
     with _lock:
         if force:
-            _pipelines.pop(resolved, None)
+            old = _pipelines.pop(resolved, None)
+            if old:
+                _close_pipeline(old)
         if resolved not in _pipelines:
             db_path = _db_path_for_project(resolved)
             config = create_config_from_env(db_path)
@@ -364,40 +392,43 @@ def _search_symbol(project_path: str, name: str, top_k: int) -> str:
     if fts is None:
         return "Error: no index found. Run index_project first."
 
-    symbols = fts.get_symbols_by_name(name)
-    if not symbols:
-        # Try fuzzy: search symbols whose name contains the query
-        try:
-            rows = fts._conn.execute(
-                "SELECT id, chunk_id, name, kind, start_line, end_line, "
-                "parent_name, signature, language FROM symbols "
-                "WHERE name LIKE ? LIMIT ?",
-                (f"%{name}%", top_k),
-            ).fetchall()
-            symbols = [
-                {"id": r[0], "chunk_id": r[1], "name": r[2], "kind": r[3],
-                 "start_line": r[4], "end_line": r[5], "parent_name": r[6],
-                 "signature": r[7], "language": r[8]}
-                for r in rows
-            ]
-        except Exception:
-            symbols = []
+    try:
+        symbols = fts.get_symbols_by_name(name)
+        if not symbols:
+            # Try fuzzy: search symbols whose name contains the query
+            try:
+                rows = fts._conn.execute(
+                    "SELECT id, chunk_id, name, kind, start_line, end_line, "
+                    "parent_name, signature, language FROM symbols "
+                    "WHERE name LIKE ? LIMIT ?",
+                    (f"%{name}%", top_k),
+                ).fetchall()
+                symbols = [
+                    {"id": r[0], "chunk_id": r[1], "name": r[2], "kind": r[3],
+                     "start_line": r[4], "end_line": r[5], "parent_name": r[6],
+                     "signature": r[7], "language": r[8]}
+                    for r in rows
+                ]
+            except Exception:
+                symbols = []
 
-    if not symbols:
-        return f"No symbols found matching '{name}'."
+        if not symbols:
+            return f"No symbols found matching '{name}'."
 
-    lines = []
-    for s in symbols[:top_k]:
-        # Get file path from chunk
-        meta = fts.get_doc_meta(s["chunk_id"]) if s["chunk_id"] else None
-        path = Path(meta[0]).as_posix() if meta else "?"
-        parent = f" in {s['parent_name']}" if s.get("parent_name") else ""
-        sig = f"\n  `{s['signature']}`" if s.get("signature") else ""
-        lines.append(
-            f"- **{s['kind']}** `{s['name']}`{parent} — "
-            f"{path}:L{s['start_line']}-{s['end_line']} [{s.get('language', '')}]{sig}"
-        )
-    return f"Found {len(symbols)} symbol(s) matching '{name}':\n\n" + "\n".join(lines)
+        lines = []
+        for s in symbols[:top_k]:
+            # Get file path from chunk
+            meta = fts.get_doc_meta(s["chunk_id"]) if s["chunk_id"] else None
+            path = Path(meta[0]).as_posix() if meta else "?"
+            parent = f" in {s['parent_name']}" if s.get("parent_name") else ""
+            sig = f"\n  `{s['signature']}`" if s.get("signature") else ""
+            lines.append(
+                f"- **{s['kind']}** `{s['name']}`{parent} — "
+                f"{path}:L{s['start_line']}-{s['end_line']} [{s.get('language', '')}]{sig}"
+            )
+        return f"Found {len(symbols)} symbol(s) matching '{name}':\n\n" + "\n".join(lines)
+    finally:
+        fts.close()
 
 
 def _search_refs(project_path: str, name: str) -> str:
@@ -406,29 +437,32 @@ def _search_refs(project_path: str, name: str) -> str:
     if fts is None:
         return "Error: no index found. Run index_project first."
 
-    refs_to = fts.get_refs_to(name)
-    refs_from = fts.get_refs_from(name)
+    try:
+        refs_to = fts.get_refs_to(name)
+        refs_from = fts.get_refs_from(name)
 
-    if not refs_to and not refs_from:
-        return f"No references found for '{name}'."
+        if not refs_to and not refs_from:
+            return f"No references found for '{name}'."
 
-    lines = []
-    if refs_to:
-        lines.append(f"### Referenced by ({len(refs_to)}):")
-        for r in refs_to:
-            lines.append(
-                f"- {r['ref_kind']:10s} `{r['from_name']}` → `{name}` "
-                f"— {Path(r['from_path']).as_posix()}:L{r['line']}"
-            )
+        lines = []
+        if refs_to:
+            lines.append(f"### Referenced by ({len(refs_to)}):")
+            for r in refs_to:
+                lines.append(
+                    f"- {r['ref_kind']:10s} `{r['from_name']}` → `{name}` "
+                    f"— {Path(r['from_path']).as_posix()}:L{r['line']}"
+                )
 
-    if refs_from:
-        lines.append(f"\n### References from `{name}` ({len(refs_from)}):")
-        for r in refs_from:
-            lines.append(
-                f"- {r['ref_kind']:10s} `{name}` → `{r['to_name']}` L{r['line']}"
-            )
+        if refs_from:
+            lines.append(f"\n### References from `{name}` ({len(refs_from)}):")
+            for r in refs_from:
+                lines.append(
+                    f"- {r['ref_kind']:10s} `{name}` → `{r['to_name']}` L{r['line']}"
+                )
 
-    return "\n".join(lines)
+        return "\n".join(lines)
+    finally:
+        fts.close()
 
 
 async def _search_regex(project_path: str, pattern: str, top_k: int, scope: str) -> str:
@@ -529,7 +563,9 @@ async def index_project(
 
     if action == "rebuild":
         with _lock:
-            _pipelines.pop(str(root), None)
+            old = _pipelines.pop(str(root), None)
+        if old:
+            _close_pipeline(old)
 
     indexing, _, _ = _get_pipelines(project_path, force=(action == "rebuild"))
 
@@ -560,7 +596,9 @@ async def index_project(
 
     # Invalidate pipeline cache so GraphSearcher picks up new symbols
     with _lock:
-        _pipelines.pop(str(root), None)
+        old = _pipelines.pop(str(root), None)
+    if old:
+        _close_pipeline(old)
 
     # Auto-start watcher after successful indexing
     _ensure_watcher(project_path)
@@ -583,9 +621,12 @@ def _index_status(project_path: str) -> str:
         return f"No index found at {db_path}. Run index_project first."
 
     metadata = MetadataStore(meta_path)
-    all_files = metadata.get_all_files()
-    deleted_ids = metadata.get_deleted_ids()
-    max_chunk = metadata.max_chunk_id()
+    try:
+        all_files = metadata.get_all_files()
+        deleted_ids = metadata.get_deleted_ids()
+        max_chunk = metadata.max_chunk_id()
+    finally:
+        metadata.close()
     total = max_chunk + 1 if max_chunk >= 0 else 0
 
     # Symbol/ref counts
@@ -599,6 +640,8 @@ def _index_status(project_path: str) -> str:
             ref_count = fts._conn.execute("SELECT COUNT(*) FROM symbol_refs").fetchone()[0]
         except Exception:
             pass
+        finally:
+            fts.close()
 
     lines = [
         f"Index: {db_path}",

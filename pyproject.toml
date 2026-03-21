@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codexlens-search"
-version = "0.5.0"
+version = "0.5.1"
 description = "Lightweight semantic code search engine — hybrid vector + FTS + AST graph + regex fusion + MCP server"
 requires-python = ">=3.10"
 dependencies = [
@@ -65,6 +65,13 @@ dev = [
 [project.scripts]
 codexlens-search = "codexlens_search.bridge:main"
 codexlens-mcp = "codexlens_search.mcp_server:main"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: integration tests requiring external services",
+    "e2e: end-to-end tests",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codexlens_search"]

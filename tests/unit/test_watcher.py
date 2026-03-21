@@ -192,7 +192,7 @@ class TestFileWatcherLogic:
         def on_changes(events):
             collected.extend(events)
 
-        cfg = WatcherConfig(debounce_ms=100)
+        cfg = WatcherConfig(debounce_ms=100, ignored_patterns=set())
         watcher = FileWatcher(Path("."), cfg, on_changes)
         return watcher, collected, _EVENT_PRIORITY
 
@@ -244,8 +244,10 @@ class TestFileWatcherLogic:
         watcher.flush_now()
         assert len(collected) == 0
 
-    def test_should_watch_filters_ignored(self, watcher_parts):
-        watcher, _, _ = watcher_parts
+    def test_should_watch_filters_ignored(self):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        cfg = WatcherConfig(debounce_ms=100)  # uses default ignored_patterns
+        watcher = FileWatcher(Path("."), cfg, lambda e: None)
         assert watcher._should_watch(Path("/project/src/main.py")) is True
         assert watcher._should_watch(Path("/project/.git/config")) is False
         assert watcher._should_watch(Path("/project/node_modules/foo.js")) is False
@@ -269,3 +271,182 @@ class TestFileWatcherLogic:
 
         obj2 = json.loads(lines[1])
         assert obj2["change_type"] == "deleted"
+
+
+# ---------------------------------------------------------------------------
+# FileWatcher — lifecycle and additional coverage
+# ---------------------------------------------------------------------------
+
+class TestFileWatcherLifecycle:
+    """Test FileWatcher start/stop/is_running and edge cases."""
+
+    def test_start_nonexistent_path_raises(self):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        cfg = WatcherConfig(debounce_ms=100)
+        watcher = FileWatcher(Path("/nonexistent/path/xyz"), cfg, lambda e: None)
+        with pytest.raises(ValueError, match="does not exist"):
+            watcher.start()
+
+    def test_start_and_stop(self, tmp_path):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        cfg = WatcherConfig(debounce_ms=100)
+        collected = []
+        watcher = FileWatcher(tmp_path, cfg, lambda e: collected.extend(e))
+
+        assert watcher.is_running is False
+        watcher.start()
+        assert watcher.is_running is True
+
+        # Double start should be a no-op (just logs warning)
+        watcher.start()
+        assert watcher.is_running is True
+
+        watcher.stop()
+        assert watcher.is_running is False
+
+        # Double stop should be safe
+        watcher.stop()
+        assert watcher.is_running is False
+
+    def test_create_with_indexer(self, tmp_path):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        mock_indexer = MagicMock()
+        cfg = WatcherConfig(debounce_ms=100)
+        watcher = FileWatcher.create_with_indexer(tmp_path, cfg, mock_indexer)
+        assert watcher.on_changes is mock_indexer.process_events_async
+
+    def test_jsonl_callback(self, capsys):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        events = [
+            FileEvent(Path("/tmp/x.py"), ChangeType.MODIFIED, 500.0),
+        ]
+        FileWatcher.jsonl_callback(events)
+        out = capsys.readouterr().out.strip()
+        import json
+        obj = json.loads(out)
+        assert obj["change_type"] == "modified"
+        assert obj["timestamp"] == 500.0
+
+    def test_jsonl_callback_empty(self, capsys):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        FileWatcher.jsonl_callback([])
+        out = capsys.readouterr().out
+        assert out == ""  # No output for empty events
+
+    def test_events_to_jsonl_empty(self):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+        result = FileWatcher.events_to_jsonl([])
+        assert result == ""
+
+    def test_on_changes_error_caught(self, tmp_path):
+        from codexlens_search.watcher.file_watcher import FileWatcher
+
+        def bad_callback(events):
+            raise RuntimeError("callback error")
+
+        cfg = WatcherConfig(debounce_ms=100, ignored_patterns=set())
+        watcher = FileWatcher(tmp_path, cfg, bad_callback)
+        watcher._on_raw_event(str(tmp_path / "a.py"), ChangeType.CREATED)
+        # Flush should not raise even though callback errors
+        watcher.flush_now()  # Should not propagate exception
+
+
+# ---------------------------------------------------------------------------
+# FileWatcher _Handler — on_moved coverage
+# ---------------------------------------------------------------------------
+
+class TestFileWatcherHandler:
+    def test_on_moved_creates_delete_and_create(self, tmp_path):
+        from codexlens_search.watcher.file_watcher import FileWatcher, _Handler
+
+        collected = []
+        cfg = WatcherConfig(debounce_ms=100, ignored_patterns=set())
+        watcher = FileWatcher(tmp_path, cfg, lambda e: collected.extend(e))
+
+        handler = _Handler(watcher)
+
+        # Simulate a move event
+        mock_event = MagicMock()
+        mock_event.is_directory = False
+        mock_event.src_path = str(tmp_path / "old.py")
+        mock_event.dest_path = str(tmp_path / "new.py")
+
+        handler.on_moved(mock_event)
+        watcher.flush_now()
+
+        # Should produce at least one event (deduplicated by path)
+        assert len(collected) >= 1
+
+    def test_on_moved_directory_ignored(self, tmp_path):
+        from codexlens_search.watcher.file_watcher import FileWatcher, _Handler
+
+        collected = []
+        cfg = WatcherConfig(debounce_ms=100)
+        watcher = FileWatcher(tmp_path, cfg, lambda e: collected.extend(e))
+
+        handler = _Handler(watcher)
+
+        mock_event = MagicMock()
+        mock_event.is_directory = True
+
+        handler.on_moved(mock_event)
+        watcher.flush_now()
+        assert len(collected) == 0
+
+
+# ---------------------------------------------------------------------------
+# IncrementalIndexer — process_events_async and debounce
+# ---------------------------------------------------------------------------
+
+class TestIncrementalIndexerAsync:
+    @pytest.fixture
+    def mock_pipeline(self):
+        pipeline = MagicMock()
+        pipeline.index_file.return_value = MagicMock(
+            files_processed=1, chunks_created=1
+        )
+        return pipeline
+
+    def test_process_events_async_buffers(self, mock_pipeline):
+        indexer = IncrementalIndexer(mock_pipeline, root=Path("/project"), debounce_window_ms=50)
+        events = [
+            FileEvent(Path("/project/a.py"), ChangeType.CREATED),
+        ]
+        indexer.process_events_async(events)
+
+        # Events are buffered, not immediately processed
+        assert len(indexer._event_buffer) == 1
+        # Cancel timer to prevent background processing
+        if indexer._flush_timer:
+            indexer._flush_timer.cancel()
+
+    def test_flush_buffer_deduplicates(self, mock_pipeline):
+        indexer = IncrementalIndexer(mock_pipeline, root=Path("/project"))
+
+        # Add duplicate events for same path
+        p = Path("/project/a.py")
+        indexer._event_buffer = [
+            FileEvent(p, ChangeType.CREATED),
+            FileEvent(p, ChangeType.MODIFIED),
+        ]
+
+        indexer._flush_buffer()
+
+        # Only one index_file call (deduplicated, last event wins)
+        assert mock_pipeline.index_file.call_count == 1
+
+    def test_flush_buffer_empty_no_op(self, mock_pipeline):
+        indexer = IncrementalIndexer(mock_pipeline)
+        indexer._flush_buffer()
+        mock_pipeline.index_file.assert_not_called()
+
+    def test_no_root_uses_absolute(self, mock_pipeline, tmp_path):
+        indexer = IncrementalIndexer(mock_pipeline, root=None)
+        events = [
+            FileEvent(tmp_path / "test.py", ChangeType.DELETED),
+        ]
+        result = indexer.process_events(events)
+        assert result.files_removed == 1
+        # Should use absolute path string
+        actual_arg = mock_pipeline.remove_file.call_args[0][0]
+        assert str(tmp_path) in actual_arg or "test.py" in actual_arg

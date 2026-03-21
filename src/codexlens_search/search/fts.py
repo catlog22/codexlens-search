@@ -400,6 +400,22 @@ class FTSEngine:
         """Commit pending writes to disk."""
         self._conn.commit()
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection."""
+        self._conn.close()
+
+    def __enter__(self) -> "FTSEngine":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
     def get_doc_meta(self, doc_id: int) -> tuple[str, int, int, str]:
         """Return (path, start_line, end_line, language) for a doc_id."""
         row = self._conn.execute(

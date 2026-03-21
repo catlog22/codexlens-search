@@ -1,7 +1,4 @@
-"""AST-based chunking and symbol extraction using tree-sitter.
-
-Requires optional ``ast`` extra: ``pip install codexlens-search[ast]``
-"""
+"""AST-based chunking and symbol extraction using tree-sitter."""
 from __future__ import annotations
 
 from codexlens_search.parsers.symbols import Symbol, SymbolKind, extract_symbols

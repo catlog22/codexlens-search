@@ -2,8 +2,6 @@
 
 Discovers .gitignore files recursively from a root directory, caches parsed
 PathSpec objects per directory, and provides is_excluded() for path matching.
-
-Requires the optional ``pathspec`` dependency (``pip install codexlens-search[gitignore]``).
 """
 from __future__ import annotations
 
@@ -39,7 +37,7 @@ class GitignoreAwareMatcher:
         if not _HAS_PATHSPEC:
             raise ImportError(
                 "pathspec is required for gitignore filtering. "
-                "Install it with: pip install codexlens-search[gitignore]"
+                "Install it with: pip install pathspec"
             )
         self._root = root.resolve()
         # Cached specs: directory -> (mtime, PathSpec)

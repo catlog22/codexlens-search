@@ -12,6 +12,12 @@ dependencies = [
     "numpy>=1.26",
     "fastembed>=0.4.0,<2.0",
     "httpx>=0.25",
+    "mcp[cli]>=1.0.0",
+    "faiss-cpu>=1.7.4",
+    "watchdog>=3.0",
+    "pathspec>=0.11",
+    "tree-sitter>=0.23",
+    "tree-sitter-languages>=1.8",
 ]
 license = {text = "MIT"}
 readme = "README.md"
@@ -35,27 +41,9 @@ Homepage = "https://github.com/catlog22/codexlens-search"
 Repository = "https://github.com/catlog22/codexlens-search"
 
 [project.optional-dependencies]
-mcp = [
-    "mcp[cli]>=1.0.0",
-]
 gpu = [
     "onnxruntime-gpu>=1.16",
-]
-faiss-cpu = [
-    "faiss-cpu>=1.7.4",
-]
-faiss-gpu = [
     "faiss-gpu>=1.7.4",
-]
-watcher = [
-    "watchdog>=3.0",
-]
-gitignore = [
-    "pathspec>=0.11",
-]
-ast = [
-    "tree-sitter>=0.23",
-    "tree-sitter-languages>=1.8",
 ]
 dev = [
     "pytest>=7.0",

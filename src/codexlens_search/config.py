@@ -36,7 +36,7 @@ class Config:
     binary_detect_sample_bytes: int = 2048
     binary_null_threshold: float = 0.10  # >10% null bytes = binary
     generated_code_markers: tuple[str, ...] = ("@generated", "DO NOT EDIT", "auto-generated", "AUTO GENERATED")
-    gitignore_filtering: bool = False  # use .gitignore rules to exclude files (requires pathspec)
+    gitignore_filtering: bool = True  # use .gitignore rules to exclude files
 
     # Code-aware chunking
     code_aware_chunking: bool = True
@@ -46,8 +46,8 @@ class Config:
         ".lua", ".sh", ".bash", ".zsh", ".ps1", ".vue", ".svelte",
     })
 
-    # AST-based chunking (Phase 2 — requires tree-sitter)
-    ast_chunking: bool = False
+    # AST-based chunking (uses tree-sitter)
+    ast_chunking: bool = True
     ast_languages: frozenset[str] | None = None  # per-language opt-in, None = all detected
 
     # Backend selection: 'auto', 'faiss', 'hnswlib'

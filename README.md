@@ -4,7 +4,11 @@ Semantic code search engine with MCP server for Claude Code.
 
 Hybrid search: vector + FTS + AST graph + ripgrep regex — with RRF fusion and reranking.
 
-## Quick Start (Claude Code MCP)
+## Quick Start
+
+```bash
+uv pip install codexlens-search
+```
 
 Add to your project `.mcp.json`:
 
@@ -13,13 +17,12 @@ Add to your project `.mcp.json`:
   "mcpServers": {
     "codexlens": {
       "command": "uvx",
-      "args": ["--from", "codexlens-search[mcp]", "codexlens-mcp"],
+      "args": ["--from", "codexlens-search", "codexlens-mcp"],
       "env": {
         "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
         "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
         "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
-        "CODEXLENS_EMBED_DIM": "1536",
-        "CODEXLENS_AST_CHUNKING": "true"
+        "CODEXLENS_EMBED_DIM": "1536"
       }
     }
   }
@@ -28,55 +31,44 @@ Add to your project `.mcp.json`:
 
 That's it. Claude Code will auto-discover the tools: `index_project` → `Search`.
 
+All features are included by default — MCP server, AST parsing, FAISS backend, file watcher, gitignore filtering. GPU acceleration is auto-detected when available.
+
 ## Install
 
 ```bash
-# Standard install
+# Standard (batteries included)
 uv pip install codexlens-search
 
-# With MCP server
-uv pip install codexlens-search[mcp]
-
-# With AST parsing (symbol extraction, cross-references, graph search)
-uv pip install codexlens-search[mcp,ast]
+# GPU acceleration (CUDA)
+uv pip install codexlens-search[gpu]
 ```
 
-Optional extras:
+Default install includes:
 
-| Extra | Description |
-|-------|-------------|
-| `mcp` | MCP server (`codexlens-mcp` command) |
-| `ast` | tree-sitter AST parsing (symbol extraction, graph search) |
-| `gpu` | GPU-accelerated embedding (onnxruntime-gpu) |
-| `faiss-cpu` | FAISS ANN backend |
-| `watcher` | File watcher for auto-indexing |
-| `gitignore` | Recursive `.gitignore` filtering |
+- **MCP server** — `codexlens-mcp` command
+- **AST parsing** — tree-sitter symbol extraction + graph search (on by default)
+- **FAISS** — ANN + binary index backend
+- **File watcher** — watchdog auto-indexing
+- **Gitignore filtering** — recursive `.gitignore` support (on by default)
+
+`[gpu]` adds `onnxruntime-gpu` + `faiss-gpu`. When GPU is detected, embedding and FAISS indexing automatically use CUDA — no config needed.
 
 ## MCP Tools
 
 ### Search
 
-Unified code search with 4 modes:
+Hybrid code search combining semantic vector, FTS, AST graph, and ripgrep regex.
 
-| Mode | Description | Requires Index | Requires rg |
-|------|-------------|:-:|:-:|
-| `auto` (default) | Semantic + regex parallel, falls back to regex if no index | - | - |
-| `symbol` | Find definitions by name (class, function, method) | ✓ | |
-| `refs` | Find cross-references (imports, calls, inheritance) | ✓ | |
-| `regex` | Ripgrep regex on live files | | ✓ |
+| Mode | Description | Requires |
+|------|-------------|----------|
+| `auto` (default) | Semantic + regex parallel. Auto-triggers background indexing if none exists. | |
+| `symbol` | Find definitions by exact/fuzzy name match | Index |
+| `refs` | Find cross-references — incoming and outgoing edges | Index |
+| `regex` | Ripgrep regex on live files | rg |
 
-Parameters:
-- `project_path` — Absolute path to the project root
-- `query` — Natural language, code symbol, or regex pattern
-- `mode` — `auto` / `symbol` / `refs` / `regex`
-- `top_k` — Max results (default 10)
-- `scope` — Relative path to restrict search (e.g. `src/auth`)
+Parameters: `project_path`, `query`, `mode`, `scope` (restricts auto/regex to subdirectory)
 
-**Auto mode behavior:**
-- Has index + has rg → semantic and regex run in parallel, results merged with dedup
-- Has index + no rg → semantic only
-- No index + has rg → regex fallback
-- No index + no rg → error with guidance
+Results capped by `CODEXLENS_TOP_K` env var (default 10).
 
 ### index_project
 
@@ -84,111 +76,59 @@ Build, update, or inspect the search index.
 
 | Action | Description |
 |--------|-------------|
-| `sync` (default) | Incremental update — only re-indexes changed files |
+| `sync` (default) | Incremental — only changed files |
 | `rebuild` | Full re-index from scratch |
-| `status` | Show index statistics (files, chunks, symbols, refs) |
+| `status` | Index statistics (files, chunks, symbols, refs) |
 
-Parameters:
-- `project_path` — Absolute path to the project root
-- `action` — `sync` / `rebuild` / `status`
-- `scope` — Relative directory to limit indexing
-- `force` — Alias for `action="rebuild"`
+Parameters: `project_path`, `action`, `scope`
 
 ### find_files
 
-Glob-based file discovery.
+Glob-based file discovery. Parameters: `project_path`, `pattern` (default `**/*`)
 
-- `project_path` — Absolute path to the project root
-- `pattern` — Glob pattern (default `**/*`)
-- `max_results` — Max file paths to return (default 100)
+Max results controlled by `CODEXLENS_FIND_MAX_RESULTS` env var (default 100).
+
+### watch_project
+
+Manage file watcher for automatic re-indexing on file changes.
+
+Parameters: `project_path`, `action` (`start` / `stop` / `status`)
 
 ## AST Features
 
-When `CODEXLENS_AST_CHUNKING=true` and `[ast]` extra is installed:
+Enabled by default. Disable with `CODEXLENS_AST_CHUNKING=false`.
 
-- **Smart chunking** — Splits code at symbol boundaries (functions, classes, methods) instead of fixed-size windows
-- **Symbol extraction** — Indexes 12 symbol kinds: function, class, method, module, variable, constant, interface, type_alias, enum, struct, trait, property
-- **Cross-references** — Extracts import, call, inherit, type_ref edges between symbols
-- **Graph search** — BFS expansion from matched symbols, fused into hybrid results with adaptive weights
+- **Smart chunking** — splits at symbol boundaries instead of fixed-size windows
+- **Symbol extraction** — 12 kinds: function, class, method, module, variable, constant, interface, type_alias, enum, struct, trait, property
+- **Cross-references** — import, call, inherit, type_ref edges
+- **Graph search** — BFS expansion from matches, fused with adaptive weights
 
-```bash
-# Install AST support (tree-sitter 0.23+)
-uv pip install codexlens-search[ast]
+Languages: Python, JavaScript, TypeScript, Go, Java, Rust, C, C++, Ruby, PHP, Scala, Kotlin, Swift, C#, Bash, Lua, Haskell, Elixir, Erlang.
 
-# Or individual grammar packages for Python 3.13+
-pip install tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript
-```
+## Configuration Examples
 
-Supported languages: Python, JavaScript, TypeScript, Go, Java, Rust, C, C++, Ruby, PHP, Scala, Kotlin, Swift, C#, Bash, Lua, Haskell, Elixir, Erlang.
+### Reranker (best quality)
 
-## MCP Configuration Examples
-
-### API Embedding + AST (recommended)
+Add reranker API on top of the Quick Start config:
 
 ```json
-{
-  "mcpServers": {
-    "codexlens": {
-      "command": "uvx",
-      "args": ["--from", "codexlens-search[mcp,ast]", "codexlens-mcp"],
-      "env": {
-        "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
-        "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
-        "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
-        "CODEXLENS_EMBED_DIM": "1536",
-        "CODEXLENS_AST_CHUNKING": "true"
-      }
-    }
-  }
-}
-```
-
-### API Embedding + API Reranker (best quality)
-
-```json
-{
-  "mcpServers": {
-    "codexlens": {
-      "command": "uvx",
-      "args": ["--from", "codexlens-search[mcp,ast]", "codexlens-mcp"],
-      "env": {
-        "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
-        "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
-        "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
-        "CODEXLENS_EMBED_DIM": "1536",
-        "CODEXLENS_RERANKER_API_URL": "https://api.jina.ai/v1",
-        "CODEXLENS_RERANKER_API_KEY": "${JINA_API_KEY}",
-        "CODEXLENS_RERANKER_API_MODEL": "jina-reranker-v2-base-multilingual",
-        "CODEXLENS_AST_CHUNKING": "true"
-      }
-    }
-  }
-}
+"CODEXLENS_RERANKER_API_URL": "https://api.jina.ai/v1",
+"CODEXLENS_RERANKER_API_KEY": "${JINA_API_KEY}",
+"CODEXLENS_RERANKER_API_MODEL": "jina-reranker-v2-base-multilingual"
 ```
 
 ### Multi-Endpoint Load Balancing
 
 ```json
-{
-  "mcpServers": {
-    "codexlens": {
-      "command": "uvx",
-      "args": ["--from", "codexlens-search[mcp]", "codexlens-mcp"],
-      "env": {
-        "CODEXLENS_EMBED_API_ENDPOINTS": "https://api1.example.com/v1|sk-key1|model,https://api2.example.com/v1|sk-key2|model",
-        "CODEXLENS_EMBED_DIM": "1536"
-      }
-    }
-  }
-}
+"CODEXLENS_EMBED_API_ENDPOINTS": "https://api1.example.com/v1|sk-key1|model,https://api2.example.com/v1|sk-key2|model",
+"CODEXLENS_EMBED_DIM": "1536"
 ```
 
-Format: `url|key|model,url|key|model,...`
+Format: `url|key|model,url|key|model,...` — replaces single-endpoint `EMBED_API_URL/KEY/MODEL`.
 
-### Local Models (Offline, No API)
+### Local Models (Offline)
 
 ```bash
-uv pip install codexlens-search[mcp]
 codexlens-search download-models
 ```
 
@@ -202,6 +142,18 @@ codexlens-search download-models
   }
 }
 ```
+
+## GPU
+
+```bash
+uv pip install codexlens-search[gpu]
+```
+
+Auto-detection handles everything:
+- **Embedding** — ONNX runtime selects CUDA provider
+- **FAISS** — index auto-transfers to GPU 0
+
+Force CPU: `CODEXLENS_DEVICE=cpu`
 
 ## CLI
 
@@ -217,28 +169,37 @@ codexlens-search download-models
 
 ### Embedding
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `CODEXLENS_EMBED_API_URL` | Embedding API base URL | `https://api.openai.com/v1` |
-| `CODEXLENS_EMBED_API_KEY` | API key | `sk-xxx` |
-| `CODEXLENS_EMBED_API_MODEL` | Model name | `text-embedding-3-small` |
-| `CODEXLENS_EMBED_API_ENDPOINTS` | Multi-endpoint: `url\|key\|model,...` | See above |
-| `CODEXLENS_EMBED_DIM` | Vector dimension | `1536` |
+| Variable | Description |
+|----------|-------------|
+| `CODEXLENS_EMBED_API_URL` | API base URL (e.g. `https://api.openai.com/v1`) |
+| `CODEXLENS_EMBED_API_KEY` | API key |
+| `CODEXLENS_EMBED_API_MODEL` | Model name (e.g. `text-embedding-3-small`) |
+| `CODEXLENS_EMBED_API_ENDPOINTS` | Multi-endpoint: `url\|key\|model,...` |
+| `CODEXLENS_EMBED_DIM` | Vector dimension (e.g. `1536`) |
 
 ### Reranker
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `CODEXLENS_RERANKER_API_URL` | Reranker API base URL | `https://api.jina.ai/v1` |
-| `CODEXLENS_RERANKER_API_KEY` | API key | `jina-xxx` |
-| `CODEXLENS_RERANKER_API_MODEL` | Model name | `jina-reranker-v2-base-multilingual` |
+| Variable | Description |
+|----------|-------------|
+| `CODEXLENS_RERANKER_API_URL` | Reranker API base URL |
+| `CODEXLENS_RERANKER_API_KEY` | API key |
+| `CODEXLENS_RERANKER_API_MODEL` | Model name |
 
-### AST & Filtering
+### Features
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CODEXLENS_AST_CHUNKING` | `false` | Enable tree-sitter AST chunking + symbol extraction |
-| `CODEXLENS_GITIGNORE_FILTERING` | `false` | Enable recursive `.gitignore` filtering |
+| `CODEXLENS_AST_CHUNKING` | `true` | AST chunking + symbol extraction |
+| `CODEXLENS_GITIGNORE_FILTERING` | `true` | Recursive `.gitignore` filtering |
+| `CODEXLENS_DEVICE` | `auto` | `auto` / `cuda` / `cpu` |
+| `CODEXLENS_AUTO_WATCH` | `false` | Auto-start file watcher after indexing |
+
+### MCP Tool Defaults
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEXLENS_TOP_K` | `10` | Search result limit |
+| `CODEXLENS_FIND_MAX_RESULTS` | `100` | find_files result limit |
 
 ### Tuning
 
@@ -249,8 +210,8 @@ codexlens-search download-models
 | `CODEXLENS_FTS_TOP_K` | `50` | FTS results per method |
 | `CODEXLENS_FUSION_K` | `60` | RRF fusion k parameter |
 | `CODEXLENS_RERANKER_TOP_K` | `20` | Results to rerank |
-| `CODEXLENS_EMBED_BATCH_SIZE` | `32` | Max texts per API batch (auto-splits on 413) |
-| `CODEXLENS_EMBED_MAX_TOKENS` | `8192` | Max tokens per text (truncate if exceeded, 0=no limit) |
+| `CODEXLENS_EMBED_BATCH_SIZE` | `32` | Texts per API batch |
+| `CODEXLENS_EMBED_MAX_TOKENS` | `8192` | Max tokens per text (0=no limit) |
 | `CODEXLENS_INDEX_WORKERS` | `2` | Parallel indexing workers |
 | `CODEXLENS_MAX_FILE_SIZE` | `1000000` | Max file size in bytes |
 
@@ -258,12 +219,11 @@ codexlens-search download-models
 
 ```
 Query → [Embedder] → query vector
-         ├→ [BinaryStore] → candidates (Hamming)
-         │     └→ [ANNIndex] → ranked IDs (cosine)
-         ├→ [FTS exact] → exact matches
-         ├→ [FTS fuzzy] → fuzzy matches
+         ├→ [FAISS Binary] → candidates (Hamming)
+         │     └→ [FAISS HNSW] → ranked IDs (cosine)
+         ├→ [FTS exact + fuzzy] → text matches
          ├→ [GraphSearcher] → symbol neighbors (BFS)
-         └→ [ripgrep] → regex matches (parallel)
+         └→ [ripgrep] → regex matches
               └→ [RRF Fusion] → merged ranking
                     └→ [Reranker] → final top-k
 ```
@@ -273,7 +233,7 @@ Query → [Embedder] → query vector
 ```bash
 git clone https://github.com/catlog22/codexlens-search.git
 cd codexlens-search
-uv pip install -e ".[dev,ast]"
+uv pip install -e ".[dev]"
 pytest
 ```
 

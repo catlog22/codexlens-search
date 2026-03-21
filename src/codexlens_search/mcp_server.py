@@ -1,9 +1,10 @@
 """MCP server for codexlens-search.
 
 Tools:
-  - Search:        Hybrid code search (semantic + regex) with symbol/reference lookup.
+  - Search:        Hybrid code search (semantic + FTS + AST graph + regex).
   - index_project: Build, update, or inspect the search index.
   - find_files:    Glob-based file discovery.
+  - watch_project: Manage file watcher for auto re-indexing.
 
 Run: codexlens-mcp  or  python -m codexlens_search.mcp_server
 
@@ -13,13 +14,13 @@ Run: codexlens-mcp  or  python -m codexlens_search.mcp_server
 {
   "mcpServers": {
     "codexlens": {
-      "command": "codexlens-mcp",
+      "command": "uvx",
+      "args": ["--from", "codexlens-search", "codexlens-mcp"],
       "env": {
         "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
         "CODEXLENS_EMBED_API_KEY": "sk-xxx",
         "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
-        "CODEXLENS_EMBED_DIM": "1536",
-        "CODEXLENS_AST_CHUNKING": "true"
+        "CODEXLENS_EMBED_DIM": "1536"
       }
     }
   }
@@ -55,6 +56,17 @@ _lock = threading.Lock()
 _bg_indexing: dict[str, threading.Thread] = {}
 _watchers: dict[str, "FileWatcher"] = {}
 _watcher_lock = threading.Lock()
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer from environment variable with fallback."""
+    val = os.environ.get(name, "")
+    if val:
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    return default
 
 
 def _close_pipeline(pipeline_tuple: tuple) -> None:
@@ -222,7 +234,7 @@ def _get_fts(project_path: str):
 
 
 # ---------------------------------------------------------------------------
-# Tool 1: search_code — unified search
+# Tool 1: Search — unified hybrid search
 # ---------------------------------------------------------------------------
 
 @mcp.tool(name="Search")
@@ -230,24 +242,29 @@ async def search_code(
     project_path: str,
     query: str,
     mode: str = "auto",
-    top_k: int = 10,
     scope: str = "",
 ) -> str:
-    """Search code in a project.
+    """Hybrid code search combining semantic vector, FTS, AST graph, and ripgrep regex.
+
+    Modes:
+      - "auto": Semantic + regex in parallel. Auto-triggers background indexing if no index exists, returning regex results first.
+      - "symbol": Find symbol definitions (function, class, method) by exact or fuzzy name match. Requires index.
+      - "refs": Find cross-references (imports, calls, inheritance) — returns both incoming and outgoing edges. Requires index.
+      - "regex": Ripgrep regex search on live files. Requires rg in PATH.
+
+    Results are capped by CODEXLENS_TOP_K env var (default 10).
 
     Args:
         project_path: Absolute path to the project root.
-        query: Search query — natural language, code symbol, or regex pattern.
-        mode: "auto" (default) — semantic + regex parallel, falls back to regex if no index.
-              "symbol" — find definitions by name (class, function, method).
-              "refs" — find cross-references (imports, calls, inheritance).
-              "regex" — ripgrep regex on live files (requires rg in PATH).
-        top_k: Max results (default 10).
-        scope: Relative path to restrict search (e.g. "src/auth").
+        query: Natural language, symbol name, or regex pattern.
+        mode: Search mode — "auto" (default), "symbol", "refs", or "regex".
+        scope: Relative directory to restrict search (e.g. "src/auth"). Applies to auto and regex modes.
     """
     root = Path(project_path).resolve()
     if not root.is_dir():
         return f"Error: project path not found: {root}"
+
+    top_k = _env_int("CODEXLENS_TOP_K", 10)
 
     if mode == "regex":
         return await _search_regex(project_path, query, top_k, scope)
@@ -387,7 +404,7 @@ def _parse_regex_output(raw: str) -> list[tuple[str, int, str]]:
 
 
 def _search_symbol(project_path: str, name: str, top_k: int) -> str:
-    """Find symbol definitions by name."""
+    """Find symbol definitions by exact name, with fuzzy (substring) fallback."""
     fts = _get_fts(project_path)
     if fts is None:
         return "Error: no index found. Run index_project first."
@@ -395,7 +412,7 @@ def _search_symbol(project_path: str, name: str, top_k: int) -> str:
     try:
         symbols = fts.get_symbols_by_name(name)
         if not symbols:
-            # Try fuzzy: search symbols whose name contains the query
+            # Fuzzy fallback: substring match
             try:
                 rows = fts._conn.execute(
                     "SELECT id, chunk_id, name, kind, start_line, end_line, "
@@ -432,7 +449,7 @@ def _search_symbol(project_path: str, name: str, top_k: int) -> str:
 
 
 def _search_refs(project_path: str, name: str) -> str:
-    """Find all references to/from a symbol."""
+    """Find all incoming and outgoing references for a symbol name."""
     fts = _get_fts(project_path)
     if fts is None:
         return "Error: no index found. Run index_project first."
@@ -533,19 +550,19 @@ async def index_project(
     project_path: str,
     action: str = "sync",
     scope: str = "",
-    force: bool = False,
     ctx: Context | None = None,
 ) -> str:
-    """Build, update, or check the search index for a project.
+    """Build or update the search index for a project.
+
+    Actions:
+      - "sync" (default): Incremental update — only re-indexes changed files.
+      - "rebuild": Full re-index from scratch, discards old index.
+      - "status": Show index statistics (files, chunks, symbols, refs) without indexing.
 
     Args:
         project_path: Absolute path to the project root.
-        action: What to do:
-            - "sync": Incremental update — only re-indexes changed files (default).
-            - "rebuild": Full re-index from scratch.
-            - "status": Show index statistics without indexing.
-        scope: Optional relative directory to limit indexing (e.g. "src/auth").
-        force: Alias for action="rebuild" (backward compat).
+        action: "sync" (default), "rebuild", or "status".
+        scope: Relative directory to limit indexing (e.g. "src/auth").
     """
     root = Path(project_path).resolve()
     if not root.is_dir():
@@ -553,9 +570,6 @@ async def index_project(
 
     if action == "status":
         return _index_status(project_path)
-
-    if force:
-        action = "rebuild"
 
     scan_root = root / scope if scope else root
     if scope and not scan_root.is_dir():
@@ -653,7 +667,7 @@ def _index_status(project_path: str) -> str:
         lines.append(f"References: {ref_count}")
         lines.append("Graph search: enabled")
     else:
-        lines.append("Graph search: disabled (no symbols — enable CODEXLENS_AST_CHUNKING=true)")
+        lines.append("Graph search: disabled (no symbols — rebuild index with index_project action=rebuild)")
 
     return "\n".join(lines)
 
@@ -664,18 +678,22 @@ def _index_status(project_path: str) -> str:
 
 @mcp.tool()
 def find_files(
-    project_path: str, pattern: str = "**/*", max_results: int = 100
+    project_path: str,
+    pattern: str = "**/*",
 ) -> str:
-    """Find files in a project by glob pattern.
+    """Find files in a project by glob pattern. Returns relative paths.
+
+    Max results controlled by CODEXLENS_FIND_MAX_RESULTS env var (default 100).
 
     Args:
         project_path: Absolute path to the project root.
         pattern: Glob pattern to match (default "**/*").
-        max_results: Max file paths to return (default 100).
     """
     root = Path(project_path).resolve()
     if not root.is_dir():
         return f"Error: project path not found: {root}"
+
+    max_results = _env_int("CODEXLENS_FIND_MAX_RESULTS", 100)
 
     matches = []
     for p in root.glob(pattern):
@@ -702,12 +720,11 @@ def watch_project(
     project_path: str,
     action: str = "status",
 ) -> str:
-    """Manage file watcher for automatic re-indexing on file changes.
+    """Manage file watcher for automatic re-indexing when files change.
 
     Args:
         project_path: Absolute path to the project root.
-        action: "start" -- start watching, "stop" -- stop watching,
-                "status" -- check watcher status (default).
+        action: "start", "stop", or "status" (default).
     """
     resolved = str(Path(project_path).resolve())
 

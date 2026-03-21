@@ -200,6 +200,22 @@ class SearchPipeline:
             except Exception:
                 _log.debug("Failed to record access for tier tracking", exc_info=True)
 
+    # -- Helper: collect top chunk IDs for graph seeding ------------------
+
+    @staticmethod
+    def _collect_top_chunk_ids(
+        fusion_input: dict[str, list[tuple[int, float]]],
+        max_seeds: int = 10,
+    ) -> list[int]:
+        """Extract top chunk IDs from vector/FTS results for graph seed discovery."""
+        scored: dict[int, float] = {}
+        for results in fusion_input.values():
+            for doc_id, score in results:
+                if doc_id not in scored or score > scored[doc_id]:
+                    scored[doc_id] = score
+        ranked = sorted(scored, key=scored.get, reverse=True)  # type: ignore[arg-type]
+        return ranked[:max_seeds]
+
     # -- Quality-routed search methods ------------------------------------
 
     def _search_fast(
@@ -263,12 +279,14 @@ class SearchPipeline:
         if fuzzy_results:
             fusion_input["fuzzy"] = fuzzy_results
 
-        # Graph search (optional)
+        # Graph search: seed from top vector/FTS chunks
         if self._graph_searcher is not None:
             try:
-                graph_results = self._graph_searcher.search(query)
-                if graph_results:
-                    fusion_input["graph"] = graph_results
+                seed_ids = self._collect_top_chunk_ids(fusion_input)
+                if seed_ids:
+                    graph_results = self._graph_searcher.search_from_chunks(seed_ids)
+                    if graph_results:
+                        fusion_input["graph"] = graph_results
             except Exception:
                 _log.warning("Graph search failed", exc_info=True)
 
@@ -317,12 +335,14 @@ class SearchPipeline:
         if fuzzy_results:
             fusion_input["fuzzy"] = fuzzy_results
 
-        # Graph search (optional)
+        # Graph search: seed from top vector/FTS chunks
         if self._graph_searcher is not None:
             try:
-                graph_results = self._graph_searcher.search(query)
-                if graph_results:
-                    fusion_input["graph"] = graph_results
+                seed_ids = self._collect_top_chunk_ids(fusion_input)
+                if seed_ids:
+                    graph_results = self._graph_searcher.search_from_chunks(seed_ids)
+                    if graph_results:
+                        fusion_input["graph"] = graph_results
             except Exception:
                 _log.warning("Graph search failed", exc_info=True)
 

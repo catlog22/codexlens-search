@@ -248,13 +248,11 @@ def create_pipeline(
     fts = FTSEngine(resolved / "fts.db")
     metadata = MetadataStore(resolved / "metadata.db")
 
-    # GraphSearcher: auto-enable when symbols table has data
+    # GraphSearcher: always create — symbols may be populated after indexing
     from codexlens_search.search.graph import GraphSearcher
     graph_searcher: GraphSearcher | None = None
     try:
-        sym_count = fts._conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        if sym_count > 0:
-            graph_searcher = GraphSearcher(fts, expand_hops=1)
+        graph_searcher = GraphSearcher(fts, expand_hops=1)
     except Exception:
         pass
 

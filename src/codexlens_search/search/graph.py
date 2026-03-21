@@ -30,13 +30,45 @@ class GraphSearcher:
     def search(self, query: str, top_k: int = 50) -> list[tuple[int, float]]:
         """Find chunks related to query via symbol reference graph.
 
+        Uses exact symbol name matching as seed discovery.
         Returns list of (chunk_id, score) sorted by score descending.
         """
         seed_symbols = self._find_seed_symbols(query)
+        return self._traverse(seed_symbols, top_k)
+
+    def search_from_chunks(
+        self, chunk_ids: list[int], top_k: int = 50,
+    ) -> list[tuple[int, float]]:
+        """Find related chunks by extracting symbols from given chunks and traversing the graph.
+
+        This is the primary entry point for natural language queries:
+        vector/FTS results provide relevant chunk_ids, and the graph
+        discovers structurally related code (callers, callees, imports).
+
+        Returns list of (chunk_id, score) sorted by score descending.
+        Excludes the seed chunk_ids themselves to avoid duplicating
+        results already found by vector/FTS.
+        """
+        seed_symbols: list[dict] = []
+        seen_names: set[str] = set()
+        for cid in chunk_ids:
+            for sym in self._fts.get_symbols_by_chunk(cid):
+                if sym["name"] not in seen_names:
+                    seen_names.add(sym["name"])
+                    seed_symbols.append(sym)
+        exclude = set(chunk_ids)
+        return self._traverse(seed_symbols, top_k, exclude_chunk_ids=exclude)
+
+    def _traverse(
+        self,
+        seed_symbols: list[dict],
+        top_k: int = 50,
+        exclude_chunk_ids: set[int] | None = None,
+    ) -> list[tuple[int, float]]:
+        """Core graph traversal from seed symbols."""
         if not seed_symbols:
             return []
 
-        # Collect scores per chunk_id from direct neighbors
         chunk_scores: dict[int, float] = defaultdict(float)
 
         for sym in seed_symbols:
@@ -68,6 +100,11 @@ class GraphSearcher:
             for cid, exp_score in expanded.items():
                 if cid not in seed_ids:
                     chunk_scores[cid] += exp_score
+
+        # Exclude seed chunks if requested (avoid duplicating vector/FTS results)
+        if exclude_chunk_ids:
+            for cid in exclude_chunk_ids:
+                chunk_scores.pop(cid, None)
 
         # Sort by score descending, take top_k
         ranked = sorted(chunk_scores.items(), key=lambda x: x[1], reverse=True)

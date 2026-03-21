@@ -239,15 +239,15 @@ class TestGraphSearcherIntegration:
     def test_balanced_includes_graph_results(self) -> None:
         fts = _make_fts(DOCS)
         graph = MagicMock()
-        graph.search.return_value = [(1, 0.5)]
+        graph.search_from_chunks.return_value = [(1, 0.5)]
         pipeline = _make_pipeline(fts, graph_searcher=graph)
         results = pipeline.search("authenticate", quality="balanced")
-        assert graph.search.called
+        assert graph.search_from_chunks.called
 
     def test_graph_failure_does_not_crash(self) -> None:
         fts = _make_fts(DOCS)
         graph = MagicMock()
-        graph.search.side_effect = RuntimeError("graph broken")
+        graph.search_from_chunks.side_effect = RuntimeError("graph broken")
         pipeline = _make_pipeline(fts, graph_searcher=graph)
         # Should not raise
         results = pipeline.search("authenticate", quality="thorough")

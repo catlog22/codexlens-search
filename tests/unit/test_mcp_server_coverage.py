@@ -96,16 +96,14 @@ class TestSearchAutoRegexOnly:
 # ---------------------------------------------------------------------------
 
 class TestSearchAutoNoResults:
-    def test_no_results_with_indexing_notice(self, run_async, tmp_path):
+    def test_no_results_with_focused_index(self, run_async, tmp_path):
         from codexlens_search.mcp_server import _search_auto
         with patch("codexlens_search.mcp_server._db_path_for_project", return_value=tmp_path / ".codexlens"):
             with patch("codexlens_search.mcp_server.shutil") as mock_shutil:
                 mock_shutil.which.return_value = "/usr/bin/rg"
-                with patch("codexlens_search.mcp_server._trigger_background_index", return_value="Note: indexing..."):
-                    with patch("codexlens_search.mcp_server._search_regex", new_callable=AsyncMock) as mock_rg:
-                        mock_rg.return_value = "No results found."
-                        result = run_async(_search_auto(str(tmp_path), "xyznonexistent", 10, ""))
-                        assert "No results" in result
+                with patch("codexlens_search.mcp_server._focused_index_and_search", return_value="No results found."):
+                    result = run_async(_search_auto(str(tmp_path), "xyznonexistent", 10, ""))
+                    assert "No results" in result
 
 
 # ---------------------------------------------------------------------------

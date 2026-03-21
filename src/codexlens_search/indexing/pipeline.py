@@ -1066,6 +1066,7 @@ class IndexingPipeline:
         max_file_size: int = 50_000,
         progress_callback: callable | None = None,
         tier: str = "full",
+        delete_removed: bool = True,
     ) -> IndexStats:
         """Reconcile index state against a current file list.
 
@@ -1081,6 +1082,9 @@ class IndexingPipeline:
             tier: Indexing tier - 'full' (default) runs the full pipeline
                   with embedding, 'fts_only' runs FTS-only indexing without
                   embedding or vector stores.
+            delete_removed: If True (default), remove files from the index
+                  that are not in file_paths.  Set to False for partial/focused
+                  indexing where file_paths is a subset of the full project.
 
         Returns:
             Aggregated IndexStats for all operations.
@@ -1098,9 +1102,11 @@ class IndexingPipeline:
         known_files = meta.get_all_files()  # {rel_path: content_hash}
 
         # Detect removed files
-        removed = set(known_files.keys()) - set(current_rel_paths.keys())
-        for rel in removed:
-            self.remove_file(rel)
+        removed: set[str] = set()
+        if delete_removed:
+            removed = set(known_files.keys()) - set(current_rel_paths.keys())
+            for rel in removed:
+                self.remove_file(rel)
 
         # Collect files needing update using 4-level detection:
         # Level 1: set diff (removed files) - handled above

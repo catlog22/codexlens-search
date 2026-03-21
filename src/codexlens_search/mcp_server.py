@@ -34,7 +34,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -278,7 +280,14 @@ async def search_code(
 
 
 async def _search_auto(project_path: str, query: str, top_k: int, scope: str) -> str:
-    """Hybrid search with parallel regex supplement and no-index fallback."""
+    """Hybrid search with parallel regex supplement and no-index fallback.
+
+    When no index exists:
+    1. Expand query → grep for relevant files (fast)
+    2. Index only those files (focused, ~seconds)
+    3. Run semantic search on the fresh index
+    4. Trigger full background index for subsequent queries
+    """
     root = Path(project_path).resolve()
     db_path = _db_path_for_project(project_path)
     has_index = (db_path / "metadata.db").exists()
@@ -287,42 +296,221 @@ async def _search_auto(project_path: str, query: str, top_k: int, scope: str) ->
     if not has_index and not has_rg:
         return "Error: no index found and ripgrep (rg) not available. Run index_project or install rg."
 
-    # Trigger background indexing if no index exists
-    indexing_notice = ""
-    if not has_index:
-        indexing_notice = _trigger_background_index(project_path)
+    # No index: focused-index-then-search
+    if not has_index and has_rg:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, _focused_index_and_search, project_path, query, top_k, scope,
+        )
+        return result
 
-    # Run semantic + regex in parallel when both available; fallback otherwise
-    semantic_task = None
-    regex_task = None
-
+    # Has index: normal semantic + regex in parallel
     loop = asyncio.get_event_loop()
+    semantic_task = loop.run_in_executor(None, _semantic_search, project_path, query, top_k, scope)
+    regex_task = _search_regex(project_path, query, top_k, scope) if has_rg else None
 
-    if has_index:
-        semantic_task = loop.run_in_executor(None, _semantic_search, project_path, query, top_k, scope)
-    if has_rg:
-        regex_task = _search_regex(project_path, query, top_k, scope)
+    semantic_results: list[tuple[str, int, int, float, str, str]] = []
+    regex_results: list[tuple[str, int, str]] = []
 
-    semantic_results: list[tuple[str, int, int, float, str, str]] = []  # (path, line, end_line, score, content, lang)
-    regex_results: list[tuple[str, int, str]] = []  # (path, line, text)
-
-    if semantic_task and regex_task:
+    if regex_task:
         semantic_results, regex_raw = await asyncio.gather(semantic_task, regex_task, return_exceptions=True)
         if isinstance(semantic_results, BaseException):
             log.warning("Semantic search failed, using regex only: %s", semantic_results)
             semantic_results = []
         if isinstance(regex_raw, BaseException):
-            log.warning("Regex search failed: %s", regex_raw)
             regex_raw = ""
         regex_results = _parse_regex_output(regex_raw) if isinstance(regex_raw, str) else []
-    elif semantic_task:
+    else:
         result = await semantic_task
         semantic_results = result if not isinstance(result, BaseException) else []
-    elif regex_task:
-        regex_raw = await regex_task
-        regex_results = _parse_regex_output(regex_raw) if isinstance(regex_raw, str) else []
 
-    # Merge: semantic results first, then regex results deduped by (path, line)
+    return _merge_results(semantic_results, regex_results, top_k)
+
+
+def _expand_query_terms(query: str) -> list[str]:
+    """Expand a natural language query into grep-friendly search terms.
+
+    Splits on whitespace, expands camelCase/snake_case,
+    and filters out short/common stop words.
+    """
+    _STOP_WORDS = frozenset({
+        "a", "an", "the", "is", "are", "was", "were", "be", "been",
+        "in", "on", "at", "to", "for", "of", "with", "by", "from",
+        "and", "or", "not", "no", "do", "does", "did", "has", "have",
+        "how", "what", "where", "when", "why", "which", "who",
+        "it", "its", "this", "that", "these", "those",
+        "i", "we", "you", "he", "she", "they", "my", "your",
+    })
+
+    tokens = query.strip().split()
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    for token in tokens:
+        lower = token.lower().strip(".,;:!?\"'`()[]{}#")
+        if not lower or len(lower) < 2 or lower in _STOP_WORDS:
+            continue
+        if lower not in seen:
+            seen.add(lower)
+            terms.append(lower)
+        # Expand camelCase: "searchQuery" → "search", "query"
+        parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)", token)
+        for p in parts:
+            pl = p.lower()
+            if pl not in seen and len(pl) >= 3 and pl not in _STOP_WORDS:
+                seen.add(pl)
+                terms.append(pl)
+        # Expand snake_case: "search_query" → "search", "query"
+        if "_" in token:
+            for p in token.split("_"):
+                pl = p.lower().strip()
+                if pl and pl not in seen and len(pl) >= 3 and pl not in _STOP_WORDS:
+                    seen.add(pl)
+                    terms.append(pl)
+
+    return terms
+
+
+def _grep_relevant_files(
+    root: Path, terms: list[str], scope: str, max_files: int = 50,
+) -> list[Path]:
+    """Use ripgrep to find files matching any of the expanded query terms.
+
+    Uses ``rg --count`` to rank files by match count, then returns the top
+    *max_files* sorted deterministically (highest match count first, then
+    by path for ties).  This ensures repeated calls with the same query
+    always return the same file set.
+    """
+    rg = shutil.which("rg")
+    if not rg or not terms:
+        return []
+
+    # Build alternation pattern: term1|term2|term3
+    pattern = "|".join(re.escape(t) for t in terms[:8])  # cap at 8 terms
+    search_path = str(root / scope) if scope else str(root)
+
+    try:
+        result = subprocess.run(
+            [rg, "--count", "--ignore-case",
+             "--type-add", "code:*.{py,js,ts,jsx,tsx,go,java,rs,cpp,c,h,hpp,rb,php,cs,kt,swift,scala,lua,sh,vue,svelte}",
+             "--type", "code",
+             pattern, search_path],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+    if result.returncode not in (0, 1):
+        return []
+
+    # Parse "filepath:count" lines and sort by count descending, path ascending
+    scored: list[tuple[int, str]] = []
+    for line in result.stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # rg --count output: "path:count"  (last colon separates count)
+        sep = line.rfind(":")
+        if sep < 0:
+            continue
+        path_str = line[:sep]
+        try:
+            count = int(line[sep + 1:])
+        except ValueError:
+            continue
+        scored.append((count, path_str))
+
+    # Sort: highest match count first, then alphabetical path for stability
+    scored.sort(key=lambda x: (-x[0], x[1]))
+
+    files: list[Path] = []
+    for _, path_str in scored[:max_files]:
+        p = Path(path_str)
+        if p.is_file():
+            files.append(p)
+    return files
+
+
+def _focused_index_and_search(
+    project_path: str, query: str, top_k: int, scope: str,
+) -> str:
+    """Grep-guided focused indexing followed by semantic search.
+
+    1. Expand query → grep terms
+    2. ripgrep --files-with-matches → relevant files
+    3. Index only those files (fast)
+    4. Semantic search
+    5. Trigger full background index for next queries
+    """
+    import time
+
+    root = Path(project_path).resolve()
+    t0 = time.monotonic()
+
+    # Step 1-2: find relevant files via grep
+    terms = _expand_query_terms(query)
+    log.info("Focused index: query=%r, terms=%s", query, terms)
+
+    relevant_files = _grep_relevant_files(root, terms, scope)
+    if not relevant_files:
+        # Fallback: no grep matches, do a small sample of all files
+        all_files = [
+            p for p in (root / scope if scope else root).rglob("*")
+            if p.is_file() and not should_exclude(p.relative_to(root), DEFAULT_EXCLUDES)
+        ]
+        relevant_files = all_files[:50]
+
+    if not relevant_files:
+        _trigger_background_index(project_path)
+        return "No matching files found. Background indexing started for full search next time."
+
+    log.info("Focused index: %d files found in %.1fs", len(relevant_files), time.monotonic() - t0)
+
+    # Step 3: index only relevant files
+    try:
+        indexing, search, _ = _get_pipelines(project_path)
+        indexing.sync(relevant_files, root=root, delete_removed=False)
+    except Exception as exc:
+        log.error("Focused indexing failed: %s", exc)
+        _trigger_background_index(project_path)
+        return f"Error during focused indexing: {exc}"
+
+    index_time = time.monotonic() - t0
+    log.info("Focused index: indexed %d files in %.1fs", len(relevant_files), index_time)
+
+    # Step 4: semantic search
+    results = search.search(query, top_k=top_k, quality="auto")
+    if scope:
+        norm_scope = scope.replace("\\", "/").strip("/")
+        results = [r for r in results if r.path.replace("\\", "/").startswith(norm_scope + "/")]
+
+    # Step 5: trigger full background index for complete coverage next time
+    _trigger_background_index(project_path)
+
+    total_time = time.monotonic() - t0
+
+    semantic_results = [
+        (r.path, r.line, r.end_line, r.score, r.content, getattr(r, "language", ""))
+        for r in results
+    ]
+
+    notice = (
+        f"**Focused search**: indexed {len(relevant_files)} relevant files in {index_time:.1f}s, "
+        f"searched in {total_time:.1f}s. Full index building in background."
+    )
+
+    output = _merge_results(semantic_results, [], top_k)
+    if output == "No results found.":
+        return notice + "\n\nNo semantic results found."
+    return notice + "\n\n" + output
+
+
+def _merge_results(
+    semantic_results: list[tuple[str, int, int, float, str, str]],
+    regex_results: list[tuple[str, int, str]],
+    top_k: int,
+) -> str:
+    """Merge semantic and regex results into formatted output."""
     seen: set[tuple[str, int]] = set()
     lines: list[str] = []
     count = 0
@@ -347,14 +535,8 @@ async def _search_auto(project_path: str, query: str, top_k: int, scope: str) ->
         lines.append(f"```\n{text}\n```\n")
 
     if not lines:
-        if indexing_notice:
-            return indexing_notice + "\n\nNo results found."
         return "No results found."
-
-    result = "\n".join(lines)
-    if indexing_notice:
-        result = indexing_notice + "\n\n" + result
-    return result
+    return "\n".join(lines)
 
 
 def _semantic_search(

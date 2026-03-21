@@ -331,11 +331,12 @@ class TestFindFiles:
         result = find_files(str(tmp_path), pattern="*.xyz")
         assert "No files" in result
 
-    def test_max_results_limit(self, tmp_path):
+    def test_max_results_limit(self, tmp_path, monkeypatch):
         from codexlens_search.mcp_server import find_files
         for i in range(5):
             (tmp_path / f"file{i}.py").touch()
-        result = find_files(str(tmp_path), max_results=3)
+        monkeypatch.setenv("CODEXLENS_FIND_MAX_RESULTS", "3")
+        result = find_files(str(tmp_path))
         assert "limited" in result.lower()
 
 

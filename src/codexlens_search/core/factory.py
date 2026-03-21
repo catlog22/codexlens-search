@@ -10,6 +10,12 @@ from codexlens_search.core.base import BaseANNIndex, BaseBinaryIndex
 logger = logging.getLogger(__name__)
 
 try:
+    from usearch.index import Index as _usearch_Index  # noqa: F401
+    _USEARCH_AVAILABLE = True
+except ImportError:
+    _USEARCH_AVAILABLE = False
+
+try:
     import faiss as _faiss  # noqa: F401
     _FAISS_AVAILABLE = True
 except ImportError:
@@ -37,7 +43,7 @@ def _has_faiss_gpu() -> bool:
 def create_ann_index(path: str | Path, dim: int, config: Config) -> BaseANNIndex:
     """Create an ANN index based on config.ann_backend.
 
-    Fallback chain for 'auto': faiss-gpu -> faiss-cpu -> hnswlib.
+    Fallback chain for 'auto': usearch -> faiss (GPU if available) -> hnswlib.
 
     Args:
         path: directory for index persistence
@@ -52,6 +58,10 @@ def create_ann_index(path: str | Path, dim: int, config: Config) -> BaseANNIndex
     """
     backend = config.ann_backend
 
+    if backend == "usearch":
+        from codexlens_search.core.usearch_index import UsearchANNIndex
+        return UsearchANNIndex(path, dim, config)
+
     if backend == "faiss":
         from codexlens_search.core.faiss_index import FAISSANNIndex
         return FAISSANNIndex(path, dim, config)
@@ -60,7 +70,12 @@ def create_ann_index(path: str | Path, dim: int, config: Config) -> BaseANNIndex
         from codexlens_search.core.index import ANNIndex
         return ANNIndex(path, dim, config)
 
-    # auto: try faiss first, then hnswlib
+    # auto: usearch -> faiss -> hnswlib
+    if _USEARCH_AVAILABLE:
+        from codexlens_search.core.usearch_index import UsearchANNIndex
+        logger.info("Auto-selected USearch ANN backend")
+        return UsearchANNIndex(path, dim, config)
+
     if _FAISS_AVAILABLE:
         from codexlens_search.core.faiss_index import FAISSANNIndex
         gpu_tag = " (GPU available)" if _has_faiss_gpu() else " (CPU)"
@@ -73,7 +88,7 @@ def create_ann_index(path: str | Path, dim: int, config: Config) -> BaseANNIndex
         return ANNIndex(path, dim, config)
 
     raise ImportError(
-        "No ANN backend available. Install faiss-cpu, faiss-gpu, or hnswlib."
+        "No ANN backend available. Install usearch, faiss-cpu, faiss-gpu, or hnswlib."
     )
 
 

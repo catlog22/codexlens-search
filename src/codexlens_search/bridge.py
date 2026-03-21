@@ -129,6 +129,10 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["hnsw_ef"] = int(os.environ["CODEXLENS_HNSW_EF"])
     if os.environ.get("CODEXLENS_HNSW_M"):
         kwargs["hnsw_M"] = int(os.environ["CODEXLENS_HNSW_M"])
+    if os.environ.get("CODEXLENS_DEVICE"):
+        kwargs["device"] = os.environ["CODEXLENS_DEVICE"]
+    if os.environ.get("CODEXLENS_ANN_BACKEND"):
+        kwargs["ann_backend"] = os.environ["CODEXLENS_ANN_BACKEND"]
     # Tier config from env
     if os.environ.get("CODEXLENS_TIER_HOT_HOURS"):
         kwargs["tier_hot_hours"] = int(os.environ["CODEXLENS_TIER_HOT_HOURS"])

@@ -69,7 +69,8 @@ class TestCreateConfigEnvVarsExtended:
             config = create_config_from_env(tmp_path)
             assert config.code_aware_chunking is True
 
-    def test_index_workers_env(self, tmp_path):
+    @patch("codexlens_search.config.Config._uses_gpu", return_value=False)
+    def test_index_workers_env(self, _mock_gpu, tmp_path):
         with patch.dict(os.environ, {"CODEXLENS_INDEX_WORKERS": "4"}):
             config = create_config_from_env(tmp_path)
             assert config.index_workers == 4

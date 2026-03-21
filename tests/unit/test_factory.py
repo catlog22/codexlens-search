@@ -44,6 +44,7 @@ class TestCreateAnnIndex:
 
             assert isinstance(idx, ANNIndex)
 
+    @patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False)
     @patch("codexlens_search.core.factory._FAISS_AVAILABLE", False)
     @patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", True)
     def test_auto_falls_back_to_hnswlib(self, tmp_path: Path) -> None:
@@ -56,6 +57,7 @@ class TestCreateAnnIndex:
 
         assert isinstance(idx, ANNIndex)
 
+    @patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False)
     @patch("codexlens_search.core.factory._FAISS_AVAILABLE", False)
     @patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", False)
     def test_auto_no_backend_raises(self, tmp_path: Path) -> None:

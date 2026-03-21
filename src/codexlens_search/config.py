@@ -27,7 +27,7 @@ class Config:
     hf_mirror: str = ""  # HuggingFace mirror URL, e.g. "https://hf-mirror.com"
 
     # GPU / execution providers
-    device: str = "auto"  # 'auto', 'cuda', 'cpu'
+    device: str = "auto"  # 'auto', 'cuda', 'directml', 'cpu'
     embed_providers: list[str] | None = None  # explicit ONNX providers override
 
     # File filtering
@@ -50,7 +50,7 @@ class Config:
     ast_chunking: bool = True
     ast_languages: frozenset[str] | None = None  # per-language opt-in, None = all detected
 
-    # Backend selection: 'auto', 'faiss', 'hnswlib'
+    # Backend selection: 'auto', 'usearch', 'faiss', 'hnswlib'
     ann_backend: str = "auto"
     binary_backend: str = "faiss"
 
@@ -128,6 +128,28 @@ class Config:
             object.__setattr__(self, "exclude_extensions", self._DEFAULT_EXCLUDE_EXTENSIONS)
         if self.embed_api_endpoints is None:
             object.__setattr__(self, "embed_api_endpoints", [])
+        # GPU ONNX sessions are not thread-safe — clamp to 1 embed worker
+        # and increase batch size to leverage GPU-internal parallelism
+        if self._uses_gpu():
+            if self.index_workers > 1:
+                object.__setattr__(self, "index_workers", 1)
+            if self.embed_batch_size <= 32:
+                object.__setattr__(self, "embed_batch_size", 64)
+
+    def _uses_gpu(self) -> bool:
+        """Check if GPU execution provider will be used (explicit or auto-detected)."""
+        if self.embed_providers is not None:
+            return any(p in self.embed_providers for p in ("CUDAExecutionProvider", "DmlExecutionProvider"))
+        if self.device in ("cuda", "directml"):
+            return True
+        if self.device == "auto":
+            try:
+                import onnxruntime
+                available = onnxruntime.get_available_providers()
+                return "CUDAExecutionProvider" in available or "DmlExecutionProvider" in available
+            except ImportError:
+                pass
+        return False
 
     def resolve_embed_providers(self) -> list[str]:
         """Return ONNX execution providers based on device config.
@@ -140,16 +162,22 @@ class Config:
         if self.device == "cuda":
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
+        if self.device == "directml":
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
         if self.device == "cpu":
             return ["CPUExecutionProvider"]
 
-        # auto-detect
+        # auto-detect: CUDA > DirectML > CPU
         try:
             import onnxruntime
             available = onnxruntime.get_available_providers()
             if "CUDAExecutionProvider" in available:
                 log.info("CUDA detected via onnxruntime, using GPU for embedding")
                 return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if "DmlExecutionProvider" in available:
+                log.info("DirectML detected via onnxruntime, using GPU for embedding")
+                return ["DmlExecutionProvider", "CPUExecutionProvider"]
         except ImportError:
             pass
 

@@ -37,23 +37,25 @@ class TestCreateANNIndex:
 
         assert isinstance(idx, ANNIndex)
 
-    def test_auto_selects_hnswlib_when_faiss_unavailable(self, tmp_path, factory_config):
+    def test_auto_selects_hnswlib_when_faiss_and_usearch_unavailable(self, tmp_path, factory_config):
         factory_config.ann_backend = "auto"
 
-        with mock.patch("codexlens_search.core.factory._FAISS_AVAILABLE", False):
-            with mock.patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", True):
-                from codexlens_search.core.factory import create_ann_index
-                idx = create_ann_index(tmp_path / "ann_auto", DIM, factory_config)
-                assert isinstance(idx, ANNIndex)
+        with mock.patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False):
+            with mock.patch("codexlens_search.core.factory._FAISS_AVAILABLE", False):
+                with mock.patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", True):
+                    from codexlens_search.core.factory import create_ann_index
+                    idx = create_ann_index(tmp_path / "ann_auto", DIM, factory_config)
+                    assert isinstance(idx, ANNIndex)
 
     def test_auto_no_backend_raises(self, tmp_path, factory_config):
         factory_config.ann_backend = "auto"
 
-        with mock.patch("codexlens_search.core.factory._FAISS_AVAILABLE", False):
-            with mock.patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", False):
-                from codexlens_search.core.factory import create_ann_index
-                with pytest.raises(ImportError, match="No ANN backend"):
-                    create_ann_index(tmp_path / "ann_none", DIM, factory_config)
+        with mock.patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False):
+            with mock.patch("codexlens_search.core.factory._FAISS_AVAILABLE", False):
+                with mock.patch("codexlens_search.core.factory._HNSWLIB_AVAILABLE", False):
+                    from codexlens_search.core.factory import create_ann_index
+                    with pytest.raises(ImportError, match="No ANN backend"):
+                        create_ann_index(tmp_path / "ann_none", DIM, factory_config)
 
     def test_faiss_explicit_when_available(self, tmp_path, factory_config):
         """When faiss is explicitly requested and available, should use FAISSANNIndex."""

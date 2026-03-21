@@ -39,6 +39,7 @@ class TestHasFaissGpu:
 # ---------------------------------------------------------------------------
 
 class TestCreateAnnIndexFaissAuto:
+    @patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False)
     @patch("codexlens_search.core.factory._FAISS_AVAILABLE", True)
     @patch("codexlens_search.core.factory._has_faiss_gpu", return_value=False)
     def test_auto_selects_faiss_cpu(self, mock_gpu, tmp_path):
@@ -50,6 +51,7 @@ class TestCreateAnnIndexFaissAuto:
             result = create_ann_index(tmp_path, 32, cfg)
             assert result is mock_faiss_idx
 
+    @patch("codexlens_search.core.factory._USEARCH_AVAILABLE", False)
     @patch("codexlens_search.core.factory._FAISS_AVAILABLE", True)
     @patch("codexlens_search.core.factory._has_faiss_gpu", return_value=True)
     def test_auto_selects_faiss_gpu(self, mock_gpu, tmp_path):

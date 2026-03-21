@@ -31,15 +31,15 @@ Add to your project `.mcp.json`:
 
 That's it. Claude Code will auto-discover the tools: `index_project` → `Search`.
 
-All features are included by default — MCP server, AST parsing, FAISS backend, file watcher, gitignore filtering. GPU acceleration is auto-detected when available.
+All features are included by default — MCP server, AST parsing, USearch + FAISS backends, file watcher, gitignore filtering. GPU acceleration is auto-detected when available.
 
 ## Install
 
 ```bash
-# Standard (batteries included)
+# One command — GPU auto-detected on Windows, no extra steps
 uv pip install codexlens-search
 
-# GPU acceleration (CUDA)
+# Linux with NVIDIA GPU (requires CUDA + cuDNN)
 uv pip install codexlens-search[gpu]
 ```
 
@@ -47,11 +47,33 @@ Default install includes:
 
 - **MCP server** — `codexlens-mcp` command
 - **AST parsing** — tree-sitter symbol extraction + graph search (on by default)
-- **FAISS** — ANN + binary index backend
+- **USearch** — high-performance HNSW ANN backend (default, cross-platform)
+- **FAISS** — ANN + binary index backend (Hamming coarse search)
 - **File watcher** — watchdog auto-indexing
 - **Gitignore filtering** — recursive `.gitignore` support (on by default)
+- **GPU acceleration** — Windows auto-installs `onnxruntime-directml`, works with any DirectX 12 GPU (NVIDIA/AMD/Intel), no CUDA needed. GPU is auto-detected at runtime — no config needed
 
-`[gpu]` adds `onnxruntime-gpu` + `faiss-gpu`. When GPU is detected, embedding and FAISS indexing automatically use CUDA — no config needed.
+`[gpu]` adds `onnxruntime-gpu` + `faiss-gpu` for Linux CUDA setups.
+
+### ANN Backend Selection
+
+Three backends for approximate nearest neighbor search, auto-selected in order:
+
+| Backend | Install | Best for |
+|---------|---------|----------|
+| `usearch` (default) | Included | Cross-platform, fastest CPU HNSW |
+| `faiss` | Included | GPU acceleration, binary Hamming search |
+| `hnswlib` | Included | Lightweight fallback |
+
+Override with `CODEXLENS_ANN_BACKEND`:
+
+```bash
+# Force specific backend
+CODEXLENS_ANN_BACKEND=faiss    # use FAISS (GPU when available)
+CODEXLENS_ANN_BACKEND=usearch  # use USearch (default)
+CODEXLENS_ANN_BACKEND=hnswlib  # use hnswlib
+CODEXLENS_ANN_BACKEND=auto     # auto-select (usearch → faiss → hnswlib)
+```
 
 ## MCP Tools
 
@@ -145,15 +167,15 @@ codexlens-search download-models
 
 ## GPU
 
-```bash
-uv pip install codexlens-search[gpu]
-```
+**Windows**: GPU acceleration is included by default — `onnxruntime-directml` is auto-installed and works with any DirectX 12 GPU (NVIDIA/AMD/Intel). No CUDA, no extra install, no config.
 
-Auto-detection handles everything:
-- **Embedding** — ONNX runtime selects CUDA provider
-- **FAISS** — index auto-transfers to GPU 0
+**Linux**: `uv pip install codexlens-search[gpu]` adds CUDA support (requires CUDA + cuDNN).
 
-Force CPU: `CODEXLENS_DEVICE=cpu`
+Auto-detection priority: CUDA > DirectML > CPU
+- **Embedding** — ONNX runtime selects best available GPU provider, ~12x faster than CPU
+- **FAISS** — index auto-transfers to GPU 0 (CUDA only)
+
+Force specific device: `CODEXLENS_DEVICE=directml` / `cuda` / `cpu`
 
 ## CLI
 
@@ -220,7 +242,7 @@ codexlens-search download-models
 ```
 Query → [Embedder] → query vector
          ├→ [FAISS Binary] → candidates (Hamming)
-         │     └→ [FAISS HNSW] → ranked IDs (cosine)
+         │     └→ [USearch/FAISS HNSW] → ranked IDs (cosine)
          ├→ [FTS exact + fuzzy] → text matches
          ├→ [GraphSearcher] → symbol neighbors (BFS)
          └→ [ripgrep] → regex matches

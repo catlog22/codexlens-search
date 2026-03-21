@@ -90,6 +90,7 @@ def _make_api_config(**overrides) -> Config:
         embed_batch_size=2,
         embed_api_max_tokens_per_batch=8192,
         embed_api_concurrency=2,
+        device="cpu",
     )
     defaults.update(overrides)
     return Config(**defaults)

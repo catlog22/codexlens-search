@@ -137,7 +137,8 @@ class TestCreateConfigFromEnv:
         assert config.reranker_api_key == "rk-123"
         assert config.reranker_api_model == "rerank-model"
 
-    def test_indexing_params_from_env(self, tmp_path):
+    @mock.patch("codexlens_search.config.Config._uses_gpu", return_value=False)
+    def test_indexing_params_from_env(self, _mock_gpu, tmp_path):
         env = {
             "CODEXLENS_CODE_AWARE_CHUNKING": "true",
             "CODEXLENS_INDEX_WORKERS": "4",

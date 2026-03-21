@@ -269,7 +269,7 @@ class TestIndexProjectSync:
                 result = run_async(index_project(str(tmp_path), action="sync"))
                 assert "Indexed" in result or "1 files" in result
 
-    def test_rebuild_with_force(self, run_async, tmp_path):
+    def test_rebuild_with_action(self, run_async, tmp_path):
         from codexlens_search.mcp_server import index_project
 
         (tmp_path / "main.py").write_text("x = 1")
@@ -281,7 +281,7 @@ class TestIndexProjectSync:
 
         with patch("codexlens_search.mcp_server._get_pipelines", return_value=(mock_indexing, MagicMock(), MagicMock())):
             with patch("codexlens_search.mcp_server._ensure_watcher"):
-                result = run_async(index_project(str(tmp_path), force=True))
+                result = run_async(index_project(str(tmp_path), action="rebuild"))
                 assert "Indexed" in result
 
 

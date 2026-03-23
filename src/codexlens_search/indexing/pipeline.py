@@ -623,6 +623,9 @@ class IndexingPipeline:
         """Choose chunking strategy based on file type and config.
 
         Fallback chain: AST chunking -> regex code chunking -> plain text.
+        When chunk_context_header is enabled, prepends structural context
+        (file path, class name, function name) to each chunk for better
+        embedding quality.
 
         Returns list of (chunk_text, path, start_line, end_line, language) tuples.
         """
@@ -641,7 +644,12 @@ class IndexingPipeline:
             try:
                 result = chunk_by_ast(text, path, lang, max_chars, overlap)
                 if result:
-                    return [(t, p, sl, el, lang) for t, p, sl, el in result]
+                    chunks = [(t, p, sl, el, lang) for t, p, sl, el in result]
+                    if self._config.chunk_context_header:
+                        chunks = self._inject_context_headers(
+                            chunks, text, path, lang,
+                        )
+                    return chunks
             except Exception as exc:
                 logger.debug("AST chunking failed for %s: %s", path, exc)
 
@@ -651,11 +659,59 @@ class IndexingPipeline:
             if suffix in self._config.code_extensions:
                 result = self._chunk_code(text, path, max_chars, overlap)
                 if result:
-                    return [(t, p, sl, el, lang) for t, p, sl, el in result]
+                    chunks = [(t, p, sl, el, lang) for t, p, sl, el in result]
+                    if self._config.chunk_context_header:
+                        chunks = self._inject_context_headers(
+                            chunks, text, path, lang,
+                        )
+                    return chunks
 
         # Level 3: Plain text chunking
         base = self._chunk_text(text, path, max_chars, overlap)
-        return [(t, p, sl, el, lang) for t, p, sl, el in base]
+        chunks = [(t, p, sl, el, lang) for t, p, sl, el in base]
+        if self._config.chunk_context_header:
+            chunks = self._inject_context_headers(chunks, text, path, lang)
+        return chunks
+
+    def _inject_context_headers(
+        self,
+        chunks: list[tuple[str, str, int, int, str]],
+        text: str,
+        path: str,
+        lang: str,
+    ) -> list[tuple[str, str, int, int, str]]:
+        """Prepend structural context (file/class/function) to each chunk.
+
+        Uses AST symbol extraction when available to map each chunk's line
+        range to its enclosing class and function. Falls back to a simple
+        file-path header for non-AST languages.
+        """
+        # Build line -> context string mapping from AST symbols
+        context_map: dict[int, str] = {}
+        if _HAS_AST_CHUNKER and lang:
+            try:
+                parser = ASTParser.get_instance()
+                tree = parser.parse(text.encode("utf-8", "replace"), lang)
+                if tree:
+                    symbols = _extract_symbols(tree, lang)
+                    for sym in symbols:
+                        parts = [f"// File: {path}"]
+                        if sym.parent_name:
+                            parts.append(f"// Class: {sym.parent_name}")
+                        parts.append(f"// {sym.kind.value.title()}: {sym.name}")
+                        header = "\n".join(parts) + "\n"
+                        for line in range(sym.start_line, sym.end_line + 1):
+                            if line not in context_map:
+                                context_map[line] = header
+            except Exception:
+                pass
+
+        file_header = f"// File: {path}\n"
+        result = []
+        for chunk_text, p, sl, el, lang_tag in chunks:
+            header = context_map.get(sl, file_header)
+            result.append((header + chunk_text, p, sl, el, lang_tag))
+        return result
 
     # ------------------------------------------------------------------
     # Symbol extraction

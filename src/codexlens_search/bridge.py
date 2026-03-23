@@ -125,6 +125,8 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
     # AST chunking from env
     if os.environ.get("CODEXLENS_AST_CHUNKING"):
         kwargs["ast_chunking"] = os.environ["CODEXLENS_AST_CHUNKING"].lower() in ("true", "1", "yes")
+    if os.environ.get("CODEXLENS_CHUNK_CONTEXT_HEADER"):
+        kwargs["chunk_context_header"] = os.environ["CODEXLENS_CHUNK_CONTEXT_HEADER"].lower() in ("true", "1", "yes")
     if os.environ.get("CODEXLENS_GITIGNORE_FILTERING"):
         kwargs["gitignore_filtering"] = os.environ["CODEXLENS_GITIGNORE_FILTERING"].lower() in ("true", "1", "yes")
     # Indexing params from env

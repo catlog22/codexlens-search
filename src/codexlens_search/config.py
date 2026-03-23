@@ -49,6 +49,7 @@ class Config:
     # AST-based chunking (uses tree-sitter)
     ast_chunking: bool = True
     ast_languages: frozenset[str] | None = None  # per-language opt-in, None = all detected
+    chunk_context_header: bool = True  # prepend file/class/func context to chunks for better embedding
 
     # Backend selection: 'auto', 'usearch', 'faiss', 'hnswlib'
     ann_backend: str = "auto"

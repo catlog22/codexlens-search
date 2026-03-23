@@ -68,8 +68,14 @@ class SearchPipeline:
     # -- Helper: check if vector index has data ----------------------------
 
     def _has_vector_index(self) -> bool:
-        """Check if the binary store has any indexed entries."""
+        """Check if the binary store has any indexed entries.
+
+        Triggers lazy-load if needed so that a freshly-created
+        SearchPipeline correctly detects an on-disk index.
+        """
         try:
+            if hasattr(self._binary_store, "_ensure_loaded"):
+                self._binary_store._ensure_loaded()
             return len(self._binary_store) > 0
         except Exception:
             return False

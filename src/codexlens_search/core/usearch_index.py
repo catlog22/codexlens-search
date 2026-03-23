@@ -54,11 +54,38 @@ class UsearchANNIndex(BaseANNIndex):
                 dtype="f32",
             )
             if self._index_path.exists():
-                idx.load(str(self._index_path))
-                logger.debug(
-                    "Loaded USearch index from %s (%d items)",
-                    self._index_path, len(idx),
-                )
+                try:
+                    idx.load(str(self._index_path))
+                except Exception as exc:
+                    logger.warning(
+                        "USearch index load failed — discarding stale index: %s", exc,
+                    )
+                    self._index_path.unlink(missing_ok=True)
+                    idx = USearchIndex(
+                        ndim=self._dim, metric="cos",
+                        connectivity=self._config.hnsw_M,
+                        expansion_add=self._config.hnsw_ef_construction,
+                        expansion_search=self._config.hnsw_ef, dtype="f32",
+                    )
+                else:
+                    # Dimension mismatch — discard stale index (model switch)
+                    if idx.ndim != self._dim:
+                        logger.warning(
+                            "USearch dimension mismatch: index=%d, config=%d — discarding stale index",
+                            idx.ndim, self._dim,
+                        )
+                        self._index_path.unlink(missing_ok=True)
+                        idx = USearchIndex(
+                            ndim=self._dim, metric="cos",
+                            connectivity=self._config.hnsw_M,
+                            expansion_add=self._config.hnsw_ef_construction,
+                            expansion_search=self._config.hnsw_ef, dtype="f32",
+                        )
+                    else:
+                        logger.debug(
+                            "Loaded USearch index from %s (%d items)",
+                            self._index_path, len(idx),
+                        )
             else:
                 logger.debug(
                     "Initialized fresh USearch index (dim=%d, M=%d)",

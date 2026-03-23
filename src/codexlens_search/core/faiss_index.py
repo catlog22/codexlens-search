@@ -88,11 +88,22 @@ class FAISSANNIndex(BaseANNIndex):
                         exc,
                     )
                     idx = faiss.read_index(str(self._index_path))
-                logger.debug(
-                    "Loaded FAISS ANN index from %s (%d items)",
-                    self._index_path, idx.ntotal,
-                )
+                # Dimension mismatch — discard stale index (model switch)
+                if idx.d != self._dim:
+                    logger.warning(
+                        "FAISS ANN dimension mismatch: index=%d, config=%d — discarding stale index",
+                        idx.d, self._dim,
+                    )
+                    self._index_path.unlink(missing_ok=True)
+                    idx = None
+                else:
+                    logger.debug(
+                        "Loaded FAISS ANN index from %s (%d items)",
+                        self._index_path, idx.ntotal,
+                    )
             else:
+                idx = None
+            if idx is None:
                 # HNSW with flat storage, M=32 by default
                 m = self._config.hnsw_M
                 idx = faiss.IndexHNSWFlat(self._dim, m, faiss.METRIC_INNER_PRODUCT)
@@ -231,11 +242,22 @@ class FAISSBinaryIndex(BaseBinaryIndex):
                         exc,
                     )
                     idx = faiss.read_index_binary(str(self._index_path))
-                logger.debug(
-                    "Loaded FAISS binary index from %s (%d items)",
-                    self._index_path, idx.ntotal,
-                )
+                # Dimension mismatch — discard stale index (model switch)
+                if idx.d != self._dim:
+                    logger.warning(
+                        "FAISS binary dimension mismatch: index=%d, config=%d — discarding stale index",
+                        idx.d, self._dim,
+                    )
+                    self._index_path.unlink(missing_ok=True)
+                    idx = None
+                else:
+                    logger.debug(
+                        "Loaded FAISS binary index from %s (%d items)",
+                        self._index_path, idx.ntotal,
+                    )
             else:
+                idx = None
+            if idx is None:
                 # IndexBinaryFlat takes dimension in bits
                 idx = faiss.IndexBinaryFlat(self._dim)
                 logger.debug(

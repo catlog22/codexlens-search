@@ -178,16 +178,25 @@ def _create_embedder(config: "Config"):
         from codexlens_search.embed.api import APIEmbedder
         embedder = APIEmbedder(config)
         log.info("Using API embedder: %s", config.embed_api_url)
-        # Auto-detect embed_dim from API if still at default
-        if config.embed_dim == 384:
-            probe_vec = embedder.embed_single("dimension probe")
-            detected_dim = probe_vec.shape[0]
-            if detected_dim != config.embed_dim:
-                log.info("Auto-detected embed_dim=%d from API (was %d)", detected_dim, config.embed_dim)
-                config.embed_dim = detected_dim
+        # Auto-detect embed_dim from API
+        probe_vec = embedder.embed_single("dimension probe")
+        detected_dim = probe_vec.shape[0]
+        if detected_dim != config.embed_dim:
+            log.info("Auto-detected embed_dim=%d from API (was %d)", detected_dim, config.embed_dim)
+            config.embed_dim = detected_dim
     else:
         from codexlens_search.embed.local import FastEmbedEmbedder
         embedder = FastEmbedEmbedder(config)
+        # Auto-detect embed_dim from local model
+        probe_vec = embedder.embed_single("dimension probe")
+        detected_dim = probe_vec.shape[0]
+        if detected_dim != config.embed_dim:
+            log.warning(
+                "Local model actual dim=%d differs from config embed_dim=%d — "
+                "auto-correcting to %d",
+                detected_dim, config.embed_dim, detected_dim,
+            )
+            config.embed_dim = detected_dim
     return embedder
 
 

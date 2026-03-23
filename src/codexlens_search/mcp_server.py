@@ -90,6 +90,20 @@ def _db_path_for_project(project_path: str) -> Path:
     return Path(project_path).resolve() / ".codexlens"
 
 
+def _purge_index_files(db_path: Path) -> None:
+    """Delete all index files in db_path to allow clean rebuild.
+
+    Handles locked sqlite files gracefully — logs a warning but continues.
+    """
+    if not db_path.is_dir():
+        return
+    for f in db_path.iterdir():
+        try:
+            f.unlink()
+        except OSError as exc:
+            log.warning("Could not delete %s: %s", f.name, exc)
+
+
 def _trigger_background_index(project_path: str) -> str:
     """Trigger background indexing if not already in progress. Returns notice string."""
     resolved = str(Path(project_path).resolve())
@@ -762,6 +776,8 @@ async def index_project(
             old = _pipelines.pop(str(root), None)
         if old:
             _close_pipeline(old)
+        # Delete old index files to avoid dimension mismatch on model switch
+        _purge_index_files(_db_path_for_project(project_path))
 
     indexing, _, _ = _get_pipelines(project_path, force=(action == "rebuild"))
 

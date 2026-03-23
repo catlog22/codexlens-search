@@ -18,6 +18,7 @@ from .fusion import (
     get_adaptive_weights,
     reciprocal_rank_fusion,
 )
+from .expansion import QueryExpander
 from .graph import GraphSearcher
 
 _log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class SearchPipeline:
         config: Config,
         metadata_store: MetadataStore | None = None,
         graph_searcher: GraphSearcher | None = None,
+        query_expander: QueryExpander | None = None,
     ) -> None:
         self._embedder = embedder
         self._binary_store = binary_store
@@ -57,6 +59,7 @@ class SearchPipeline:
         self._config = config
         self._metadata_store = metadata_store
         self._graph_searcher = graph_searcher
+        self._query_expander = query_expander
 
     def close(self) -> None:
         """Close owned FTS and metadata connections."""
@@ -384,6 +387,13 @@ class SearchPipeline:
         """
         cfg = self._config
         final_top_k = top_k if top_k is not None else cfg.reranker_top_k
+
+        # Query expansion: inject code tokens for natural language queries
+        if self._query_expander is not None and cfg.expansion_enabled:
+            try:
+                query = self._query_expander.expand(query)
+            except Exception:
+                _log.warning("Query expansion failed", exc_info=True)
 
         # Resolve quality tier
         effective_quality = quality or cfg.default_search_quality

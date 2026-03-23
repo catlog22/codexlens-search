@@ -285,6 +285,15 @@ def create_pipeline(
         metadata=metadata,
     )
 
+    # QueryExpander: two-hop symbol vocabulary expansion
+    from codexlens_search.search.expansion import QueryExpander
+    query_expander: QueryExpander | None = None
+    if config.expansion_enabled:
+        try:
+            query_expander = QueryExpander(fts, embedder, config)
+        except Exception:
+            log.warning("Failed to create QueryExpander", exc_info=True)
+
     search = SearchPipeline(
         embedder=embedder,
         binary_store=binary_store,
@@ -294,6 +303,7 @@ def create_pipeline(
         config=config,
         metadata_store=metadata,
         graph_searcher=graph_searcher,
+        query_expander=query_expander,
     )
 
     return indexing, search, config

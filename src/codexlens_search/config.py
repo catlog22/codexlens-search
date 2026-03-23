@@ -98,6 +98,11 @@ class Config:
     # FTS
     fts_top_k: int = 50
 
+    # Query expansion (symbol vocabulary nearest-neighbor + two-hop)
+    expansion_enabled: bool = True
+    expansion_top_k: int = 5  # max first-hop terms from vector similarity
+    expansion_threshold: float = 0.35  # cosine similarity cutoff
+
     # Fusion
     fusion_k: int = 60  # RRF k parameter
     fusion_weights: dict = field(default_factory=lambda: {

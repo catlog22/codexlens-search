@@ -1,0 +1,390 @@
+{
+  "tool": "codexlens-search",
+  "version": "0.8.0",
+  "total_queries": 20,
+  "elapsed_seconds": 24.39,
+  "avg_recall": 0.8917,
+  "avg_mrr": 0.9667,
+  "avg_ndcg5": 0.8935,
+  "top3_rate": 1.0,
+  "zero_recall": 0,
+  "queries": [
+    {
+      "id": "CQ1",
+      "category": "cross-module",
+      "query": "how does a natural language query flow from user input through embedding, binary coarse filter, ANN refinement, FTS matching, fusion, and reranking to produce final ranked results",
+      "difficulty": "hard",
+      "expected": [
+        "search/pipeline.py",
+        "search/fusion.py",
+        "core/binary.py",
+        "core/index.py"
+      ],
+      "recall": 0.5,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.6367,
+      "found": [
+        "search/pipeline.py",
+        "search/fusion.py",
+        "mcp_server.py",
+        "indexing/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ2",
+      "category": "cross-module",
+      "query": "abstract base classes and interface contracts that define the plugin architecture for swappable backends",
+      "difficulty": "hard",
+      "expected": [
+        "core/base.py",
+        "embed/base.py",
+        "rerank/base.py"
+      ],
+      "recall": 0.6666666666666666,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.7039,
+      "found": [
+        "core/base.py",
+        "embed/api.py",
+        "embed/base.py",
+        "core/shard.py",
+        "embed/local.py"
+      ]
+    },
+    {
+      "id": "CQ3",
+      "category": "cross-module",
+      "query": "LRU eviction policy for shard lifecycle management when memory limit is exceeded during parallel search",
+      "difficulty": "medium",
+      "expected": [
+        "core/shard_manager.py",
+        "core/shard.py"
+      ],
+      "recall": 0.5,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.6131,
+      "found": [
+        "core/shard_manager.py"
+      ]
+    },
+    {
+      "id": "CQ4",
+      "category": "behavioral",
+      "query": "how the system decides whether to use local ONNX inference or remote HTTP API for turning text into dense vectors",
+      "difficulty": "hard",
+      "expected": [
+        "embed/local.py",
+        "embed/api.py",
+        "bridge.py"
+      ],
+      "recall": 1.0,
+      "mrr": 0.3333333333333333,
+      "top3_hit": true,
+      "ndcg5": 0.6183,
+      "found": [
+        "model_manager.py",
+        "rerank/local.py",
+        "embed/local.py",
+        "embed/api.py",
+        "bridge.py",
+        "config.py"
+      ]
+    },
+    {
+      "id": "CQ5",
+      "category": "behavioral",
+      "query": "debouncing rapid filesystem notifications before triggering incremental re-processing of changed files",
+      "difficulty": "medium",
+      "expected": [
+        "watcher/file_watcher.py",
+        "watcher/events.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.9197,
+      "found": [
+        "watcher/file_watcher.py",
+        "watcher/incremental_indexer.py",
+        "watcher/events.py"
+      ]
+    },
+    {
+      "id": "CQ6",
+      "category": "behavioral",
+      "query": "detecting whether a file contains machine-generated code or binary content and skipping it during processing",
+      "difficulty": "medium",
+      "expected": [
+        "indexing/pipeline.py",
+        "config.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "indexing/pipeline.py",
+        "config.py",
+        "search/fusion.py"
+      ]
+    },
+    {
+      "id": "CQ7",
+      "category": "behavioral",
+      "query": "splitting source code at meaningful boundaries like function definitions and class declarations rather than fixed character counts",
+      "difficulty": "medium",
+      "expected": [
+        "parsers/chunker.py",
+        "indexing/pipeline.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "indexing/pipeline.py",
+        "parsers/chunker.py"
+      ]
+    },
+    {
+      "id": "CQ8",
+      "category": "negative",
+      "query": "graceful fallback when the vector index is empty or missing and only keyword search is available",
+      "difficulty": "hard",
+      "expected": [
+        "search/pipeline.py",
+        "mcp_server.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "search/pipeline.py",
+        "mcp_server.py",
+        "core/binary.py",
+        "core/factory.py"
+      ]
+    },
+    {
+      "id": "CQ9",
+      "category": "negative",
+      "query": "retry logic and error recovery when external API calls for embedding or reranking fail with network errors",
+      "difficulty": "medium",
+      "expected": [
+        "embed/api.py",
+        "rerank/api.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "embed/api.py",
+        "rerank/api.py"
+      ]
+    },
+    {
+      "id": "CQ10",
+      "category": "impl-detail",
+      "query": "adaptive weight adjustment for fusion based on whether the query contains code identifiers versus natural language",
+      "difficulty": "hard",
+      "expected": [
+        "search/fusion.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "search/fusion.py",
+        "search/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ11",
+      "category": "impl-detail",
+      "query": "prepending file path and enclosing class or function name as context header to each chunk before embedding",
+      "difficulty": "medium",
+      "expected": [
+        "indexing/pipeline.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "indexing/pipeline.py",
+        "indexing/metadata.py"
+      ]
+    },
+    {
+      "id": "CQ12",
+      "category": "impl-detail",
+      "query": "mapping Python import statements and function calls to directed graph edges between symbols for structural code search",
+      "difficulty": "hard",
+      "expected": [
+        "parsers/references.py",
+        "search/graph.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "search/graph.py",
+        "parsers/references.py",
+        "mcp_server.py"
+      ]
+    },
+    {
+      "id": "CQ13",
+      "category": "impl-detail",
+      "query": "HuggingFace mirror configuration and ONNX model cache validation to avoid redundant downloads",
+      "difficulty": "medium",
+      "expected": [
+        "model_manager.py",
+        "config.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "model_manager.py",
+        "config.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ14",
+      "category": "impl-detail",
+      "query": "converting high-dimensional float32 vectors to compact binary representations using sign-based quantization for fast hamming pre-filtering",
+      "difficulty": "medium",
+      "expected": [
+        "core/binary.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "core/binary.py",
+        "core/faiss_index.py",
+        "core/base.py"
+      ]
+    },
+    {
+      "id": "CQ15",
+      "category": "integration",
+      "query": "environment variable and dataclass configuration cascade that controls embedding model selection, GPU device, and index parameters",
+      "difficulty": "hard",
+      "expected": [
+        "config.py",
+        "bridge.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "config.py",
+        "bridge.py",
+        "embed/api.py",
+        "embed/base.py"
+      ]
+    },
+    {
+      "id": "CQ16",
+      "category": "integration",
+      "query": "how the MCP server lazily creates search pipelines per project and manages their lifecycle with background indexing triggers",
+      "difficulty": "medium",
+      "expected": [
+        "mcp_server.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "mcp_server.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ17",
+      "category": "integration",
+      "query": "parallel worker pool that simultaneously chunks files, extracts symbols, computes embeddings, and stores results in the database",
+      "difficulty": "medium",
+      "expected": [
+        "indexing/pipeline.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "indexing/pipeline.py",
+        "embed/api.py"
+      ]
+    },
+    {
+      "id": "CQ18",
+      "category": "integration",
+      "query": "seed symbol discovery from initial search results followed by multi-hop graph traversal to find structurally related code",
+      "difficulty": "hard",
+      "expected": [
+        "search/graph.py",
+        "search/pipeline.py"
+      ],
+      "recall": 0.5,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.6131,
+      "found": [
+        "search/graph.py"
+      ]
+    },
+    {
+      "id": "CQ19",
+      "category": "integration",
+      "query": "incremental sync that detects added modified and deleted files then updates only affected chunks and metadata without full re-index",
+      "difficulty": "hard",
+      "expected": [
+        "indexing/pipeline.py",
+        "indexing/metadata.py",
+        "watcher/incremental_indexer.py"
+      ],
+      "recall": 0.6666666666666666,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 0.7654,
+      "found": [
+        "watcher/incremental_indexer.py",
+        "indexing/metadata.py",
+        "watcher/file_watcher.py"
+      ]
+    },
+    {
+      "id": "CQ20",
+      "category": "integration",
+      "query": "multi-endpoint round-robin load balancing for distributing embedding API requests across multiple providers with token-aware batching",
+      "difficulty": "hard",
+      "expected": [
+        "embed/api.py",
+        "config.py"
+      ],
+      "recall": 1.0,
+      "mrr": 1.0,
+      "top3_hit": true,
+      "ndcg5": 1.0,
+      "found": [
+        "embed/api.py",
+        "config.py"
+      ]
+    }
+  ]
+}

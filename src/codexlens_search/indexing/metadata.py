@@ -143,6 +143,13 @@ class MetadataStore:
         self._conn.commit()
         return len(chunk_ids)
 
+    def get_all_chunk_ids_set(self) -> set[int]:
+        """Return all active chunk IDs tracked by metadata."""
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM chunks"
+        ).fetchall()
+        return {r[0] for r in rows}
+
     def get_deleted_ids(self) -> set[int]:
         """Return all tombstoned chunk IDs for search-time filtering."""
         rows = self._conn.execute(

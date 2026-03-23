@@ -1056,6 +1056,35 @@ class IndexingPipeline:
             file_path, count, fts_count,
         )
 
+    def purge_orphan_fts(self) -> int:
+        """Remove FTS entries that are not tracked by metadata.
+
+        Orphan entries arise when metadata.db is reset (deleted or recreated)
+        while fts.db retains entries from a previous indexing run. These
+        orphan chunks have no corresponding ANN vectors and inflate FTS
+        results without vector backing.
+
+        Returns the number of purged FTS entries.
+        """
+        meta = self._require_metadata()
+        fts_ids = self._fts.get_all_chunk_ids()
+        if not fts_ids:
+            return 0
+
+        # Chunk IDs known to metadata (active + deleted/tombstoned)
+        known_ids = meta.get_all_chunk_ids_set() | meta.get_deleted_ids()
+
+        orphan_ids = sorted(fts_ids - known_ids)
+        if not orphan_ids:
+            return 0
+
+        count = self._fts.delete_by_ids(orphan_ids)
+        logger.info(
+            "Purged %d orphan FTS entries not tracked by metadata",
+            count,
+        )
+        return count
+
     def sync(
         self,
         file_paths: list[Path],
@@ -1091,6 +1120,10 @@ class IndexingPipeline:
         """
         meta = self._require_metadata()
         t0 = time.monotonic()
+
+        # Purge orphan FTS entries not tracked by metadata
+        # (e.g., after metadata.db was reset while fts.db was retained)
+        self.purge_orphan_fts()
 
         # Build set of current relative paths
         current_rel_paths: dict[str, Path] = {}

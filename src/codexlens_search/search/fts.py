@@ -355,12 +355,48 @@ class FTSEngine:
         ).fetchone()
         return row[0] if row else ""
 
+    def get_all_chunk_ids(self) -> set[int]:
+        """Return all doc IDs in the FTS index."""
+        rows = self._conn.execute("SELECT id FROM docs_meta").fetchall()
+        return {r[0] for r in rows}
+
     def get_chunk_ids_by_path(self, path: str) -> list[int]:
         """Return all doc IDs associated with a given file path."""
         rows = self._conn.execute(
             "SELECT id FROM docs_meta WHERE path = ?", (path,)
         ).fetchall()
         return [r[0] for r in rows]
+
+    def delete_by_ids(self, ids: list[int]) -> int:
+        """Delete docs, docs_meta, symbols, and refs for the given chunk IDs.
+
+        Used for purging orphan entries that are not tracked by metadata.
+        Processes in batches of 500 to avoid SQLite variable limits.
+
+        Returns the number of deleted documents.
+        """
+        if not ids:
+            return 0
+        total = 0
+        batch_size = 500
+        for start in range(0, len(ids), batch_size):
+            batch = ids[start : start + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            self._conn.execute(
+                f"DELETE FROM symbols WHERE chunk_id IN ({placeholders})",
+                batch,
+            )
+            self._conn.execute(
+                f"DELETE FROM docs WHERE rowid IN ({placeholders})",
+                batch,
+            )
+            self._conn.execute(
+                f"DELETE FROM docs_meta WHERE id IN ({placeholders})",
+                batch,
+            )
+            total += len(batch)
+        self._conn.commit()
+        return total
 
     def delete_by_path(self, path: str) -> int:
         """Delete all docs, docs_meta, symbols, and refs rows for a given file path.

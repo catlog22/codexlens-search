@@ -100,7 +100,9 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["embed_api_max_tokens_per_batch"] = int(os.environ["CODEXLENS_EMBED_API_MAX_TOKENS"])
     if os.environ.get("CODEXLENS_EMBED_MAX_TOKENS"):
         kwargs["embed_max_tokens"] = int(os.environ["CODEXLENS_EMBED_MAX_TOKENS"])
-    # Reranker API env vars
+    # Reranker env vars
+    if os.environ.get("CODEXLENS_RERANKER_MODEL"):
+        kwargs["reranker_model"] = os.environ["CODEXLENS_RERANKER_MODEL"]
     if os.environ.get("CODEXLENS_RERANKER_API_URL"):
         kwargs["reranker_api_url"] = os.environ["CODEXLENS_RERANKER_API_URL"]
     if os.environ.get("CODEXLENS_RERANKER_API_KEY"):

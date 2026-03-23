@@ -45,6 +45,45 @@ logger = logging.getLogger(__name__)
 _SENTINEL = None
 
 # ---------------------------------------------------------------------------
+# Code-pattern-to-concept mapping for index-time concept tagging
+# ---------------------------------------------------------------------------
+# Maps regex patterns found in code to semantic concept keywords.
+# These keywords are appended to chunk text so that FTS can bridge the gap
+# between natural-language queries and implementation-level code patterns.
+
+_CODE_CONCEPT_MAP: list[tuple[re.Pattern[str], list[str]]] = [
+    # Thread safety / concurrency
+    (re.compile(r'\bthreading\.(R?Lock|Semaphore|Event|Condition|Barrier)\b'),
+     ['thread-safety', 'locking', 'concurrency', 'synchronization']),
+    (re.compile(r'with\s+self\._lock'),
+     ['thread-safety', 'locking', 'mutex', 'concurrent-access']),
+    (re.compile(r'\basyncio\.(Lock|Semaphore|Event)\b'),
+     ['async-locking', 'concurrency']),
+    (re.compile(r'\bmultiprocessing\.(Lock|Queue|Pool)\b'),
+     ['multiprocessing', 'parallelism', 'concurrency']),
+    # Caching
+    (re.compile(r'\b(lru_cache|functools\.cache)\b'),
+     ['caching', 'memoization']),
+    # Singleton / factory
+    (re.compile(r'cls\._instance|_instance\s*=\s*None'),
+     ['singleton-pattern']),
+    # Lazy loading
+    (re.compile(r'_ensure_loaded|lazy.?load|_loaded\s*=\s*False'),
+     ['lazy-loading', 'deferred-init']),
+    # Batch processing
+    (re.compile(r'embed_batch|batch.*process'),
+     ['batch-processing']),
+    # GPU / acceleration
+    (re.compile(r'CUDAExecutionProvider|DmlExecutionProvider|gpu|cuda', re.IGNORECASE),
+     ['gpu-acceleration', 'hardware-acceleration']),
+    # Search / retrieval
+    (re.compile(r'\b(bm25|hamming|cosine.?sim)\b'),
+     ['search-scoring', 'similarity']),
+    (re.compile(r'\b(HNSW|hnsw|approximate.?nearest)\b'),
+     ['approximate-nearest-neighbor', 'vector-search']),
+]
+
+# ---------------------------------------------------------------------------
 # Language detection: 3-tier extension mapping (~30 extensions)
 # ---------------------------------------------------------------------------
 # Tier 1: Most common languages
@@ -625,7 +664,8 @@ class IndexingPipeline:
         Fallback chain: AST chunking -> regex code chunking -> plain text.
         When chunk_context_header is enabled, prepends structural context
         (file path, class name, function name) to each chunk for better
-        embedding quality.
+        embedding quality. Concept tags are always appended when code
+        patterns are detected.
 
         Returns list of (chunk_text, path, start_line, end_line, language) tuples.
         """
@@ -649,7 +689,7 @@ class IndexingPipeline:
                         chunks = self._inject_context_headers(
                             chunks, text, path, lang,
                         )
-                    return chunks
+                    return self._add_concept_tags(chunks)
             except Exception as exc:
                 logger.debug("AST chunking failed for %s: %s", path, exc)
 
@@ -664,14 +704,14 @@ class IndexingPipeline:
                         chunks = self._inject_context_headers(
                             chunks, text, path, lang,
                         )
-                    return chunks
+                    return self._add_concept_tags(chunks)
 
         # Level 3: Plain text chunking
         base = self._chunk_text(text, path, max_chars, overlap)
         chunks = [(t, p, sl, el, lang) for t, p, sl, el in base]
         if self._config.chunk_context_header:
             chunks = self._inject_context_headers(chunks, text, path, lang)
-        return chunks
+        return self._add_concept_tags(chunks)
 
     def _inject_context_headers(
         self,
@@ -711,6 +751,28 @@ class IndexingPipeline:
         for chunk_text, p, sl, el, lang_tag in chunks:
             header = context_map.get(sl, file_header)
             result.append((header + chunk_text, p, sl, el, lang_tag))
+        return result
+
+    @staticmethod
+    def _add_concept_tags(
+        chunks: list[tuple[str, str, int, int, str]],
+    ) -> list[tuple[str, str, int, int, str]]:
+        """Append concept tags to chunks based on code pattern matching.
+
+        Scans each chunk for known code patterns (e.g. threading.RLock,
+        asyncio.Lock) and appends semantic concept keywords that bridge
+        the gap between natural-language queries and code-level constructs.
+        """
+        result = []
+        for chunk_text, p, sl, el, lang_tag in chunks:
+            found_tags: set[str] = set()
+            for pattern, tags in _CODE_CONCEPT_MAP:
+                if pattern.search(chunk_text):
+                    found_tags.update(tags)
+            if found_tags:
+                tag_str = ", ".join(sorted(found_tags))
+                chunk_text = f"{chunk_text}\n// Concepts: {tag_str}"
+            result.append((chunk_text, p, sl, el, lang_tag))
         return result
 
     # ------------------------------------------------------------------

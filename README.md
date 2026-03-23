@@ -7,7 +7,7 @@ Hybrid search: vector + FTS + AST graph + ripgrep regex — with RRF fusion and 
 ## Quick Start
 
 ```bash
-uv pip install codexlens-search
+pip install codexlens-search[all]
 ```
 
 Add to your project `.mcp.json`:
@@ -17,7 +17,7 @@ Add to your project `.mcp.json`:
   "mcpServers": {
     "codexlens": {
       "command": "uvx",
-      "args": ["--from", "codexlens-search", "codexlens-mcp"],
+      "args": ["--from", "codexlens-search[all]", "codexlens-mcp"],
       "env": {
         "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
         "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
@@ -29,31 +29,50 @@ Add to your project `.mcp.json`:
 }
 ```
 
-That's it. Claude Code will auto-discover the tools: `index_project` → `Search`.
-
-All features are included by default — MCP server, AST parsing, USearch + FAISS backends, file watcher, gitignore filtering. GPU acceleration is auto-detected when available.
+That's it. Claude Code will auto-discover the tools: `index_project` -> `Search`.
 
 ## Install
 
-```bash
-# One command — GPU auto-detected on Windows, no extra steps
-uv pip install codexlens-search
+Choose the install that matches your platform:
 
-# Linux with NVIDIA GPU (requires CUDA + cuDNN)
-uv pip install codexlens-search[gpu]
+```bash
+# Minimal — CPU inference (fastembed bundles onnxruntime CPU)
+pip install codexlens-search
+
+# Windows GPU — DirectML, any DirectX 12 GPU (NVIDIA/AMD/Intel)
+pip install codexlens-search[directml]
+
+# Linux/Windows NVIDIA GPU — CUDA (requires CUDA + cuDNN)
+pip install codexlens-search[cuda]
+
+# Auto-select — DirectML on Windows, CPU elsewhere
+pip install codexlens-search[all]
 ```
 
-Default install includes:
+### Platform Recommendations
+
+| Platform | Recommended | Command |
+|----------|-------------|---------|
+| **Windows + any GPU** | `[directml]` | `pip install codexlens-search[directml]` |
+| **Windows CPU only** | base | `pip install codexlens-search` |
+| **Linux + NVIDIA GPU** | `[cuda]` | `pip install codexlens-search[cuda]` |
+| **Linux CPU / AMD GPU** | base | `pip install codexlens-search` |
+| **macOS (Apple Silicon)** | base | `pip install codexlens-search` |
+| **Don't know / CI** | `[all]` | `pip install codexlens-search[all]` |
+
+> **Note**: On Windows, if you install the base package without `[directml]`, the MCP server will auto-detect the missing GPU runtime and install `onnxruntime-directml` on first launch. GPU takes effect from the second start.
+
+### What's Included
+
+All install variants include:
 
 - **MCP server** — `codexlens-mcp` command
-- **AST parsing** — tree-sitter symbol extraction + graph search (on by default)
-- **USearch** — high-performance HNSW ANN backend (default, cross-platform)
+- **AST parsing** — tree-sitter symbol extraction + graph search
+- **USearch** — high-performance HNSW ANN backend (default)
 - **FAISS** — ANN + binary index backend (Hamming coarse search)
 - **File watcher** — watchdog auto-indexing
-- **Gitignore filtering** — recursive `.gitignore` support (on by default)
-- **GPU acceleration** — Windows auto-installs `onnxruntime-directml`, works with any DirectX 12 GPU (NVIDIA/AMD/Intel), no CUDA needed. GPU is auto-detected at runtime — no config needed
-
-`[gpu]` adds `onnxruntime-gpu` + `faiss-gpu` for Linux CUDA setups.
+- **Gitignore filtering** — recursive `.gitignore` support
+- **Focused search** — when no index exists, greps relevant files, indexes only those (~10s), then runs semantic search — no waiting for full index build
 
 ### ANN Backend Selection
 
@@ -68,11 +87,10 @@ Three backends for approximate nearest neighbor search, auto-selected in order:
 Override with `CODEXLENS_ANN_BACKEND`:
 
 ```bash
-# Force specific backend
 CODEXLENS_ANN_BACKEND=faiss    # use FAISS (GPU when available)
 CODEXLENS_ANN_BACKEND=usearch  # use USearch (default)
 CODEXLENS_ANN_BACKEND=hnswlib  # use hnswlib
-CODEXLENS_ANN_BACKEND=auto     # auto-select (usearch → faiss → hnswlib)
+CODEXLENS_ANN_BACKEND=auto     # auto-select (usearch > faiss > hnswlib)
 ```
 
 ## MCP Tools
@@ -83,7 +101,7 @@ Hybrid code search combining semantic vector, FTS, AST graph, and ripgrep regex.
 
 | Mode | Description | Requires |
 |------|-------------|----------|
-| `auto` (default) | Semantic + regex parallel. Auto-triggers background indexing if none exists. | |
+| `auto` (default) | Semantic + regex parallel. No index? Focused grep-index-search in ~10s. | |
 | `symbol` | Find definitions by exact/fuzzy name match | Index |
 | `refs` | Find cross-references — incoming and outgoing edges | Index |
 | `regex` | Ripgrep regex on live files | rg |
@@ -91,6 +109,18 @@ Hybrid code search combining semantic vector, FTS, AST graph, and ripgrep regex.
 Parameters: `project_path`, `query`, `mode`, `scope` (restricts auto/regex to subdirectory)
 
 Results capped by `CODEXLENS_TOP_K` env var (default 10).
+
+#### Cold Start Search
+
+When no index exists, `auto` mode uses a focused search pipeline instead of waiting for a full index build:
+
+1. **Expand query** — split camelCase/snake_case into search terms
+2. **Grep files** — `rg --count` finds top 50 relevant files, ranked by match count
+3. **Index** — embed only those 50 files (~8-10s with GPU)
+4. **Search** — semantic vector search on the fresh index
+5. **Background** — full index builds asynchronously for next queries
+
+This gives semantic results in ~10s vs ~100s for a full index build.
 
 ### index_project
 
@@ -123,7 +153,7 @@ Enabled by default. Disable with `CODEXLENS_AST_CHUNKING=false`.
 - **Smart chunking** — splits at symbol boundaries instead of fixed-size windows
 - **Symbol extraction** — 12 kinds: function, class, method, module, variable, constant, interface, type_alias, enum, struct, trait, property
 - **Cross-references** — import, call, inherit, type_ref edges
-- **Graph search** — BFS expansion from matches, fused with adaptive weights
+- **Graph search** — seeded from vector/FTS results, BFS expansion with adaptive weights
 
 Languages: Python, JavaScript, TypeScript, Go, Java, Rust, C, C++, Ruby, PHP, Scala, Kotlin, Swift, C#, Bash, Lua, Haskell, Elixir, Erlang.
 
@@ -167,9 +197,9 @@ codexlens-search download-models
 
 ## GPU
 
-**Windows**: GPU acceleration is included by default — `onnxruntime-directml` is auto-installed and works with any DirectX 12 GPU (NVIDIA/AMD/Intel). No CUDA, no extra install, no config.
+**Windows**: `pip install codexlens-search[directml]` — works with any DirectX 12 GPU (NVIDIA/AMD/Intel). No CUDA needed. Even without `[directml]`, the server auto-installs it on first launch.
 
-**Linux**: `uv pip install codexlens-search[gpu]` adds CUDA support (requires CUDA + cuDNN).
+**Linux**: `pip install codexlens-search[cuda]` adds CUDA support (requires CUDA + cuDNN).
 
 Auto-detection priority: CUDA > DirectML > CPU
 - **Embedding** — ONNX runtime selects best available GPU provider, ~12x faster than CPU
@@ -213,7 +243,7 @@ codexlens-search download-models
 |----------|---------|-------------|
 | `CODEXLENS_AST_CHUNKING` | `true` | AST chunking + symbol extraction |
 | `CODEXLENS_GITIGNORE_FILTERING` | `true` | Recursive `.gitignore` filtering |
-| `CODEXLENS_DEVICE` | `auto` | `auto` / `cuda` / `cpu` |
+| `CODEXLENS_DEVICE` | `auto` | `auto` / `cuda` / `directml` / `cpu` |
 | `CODEXLENS_AUTO_WATCH` | `false` | Auto-start file watcher after indexing |
 
 ### MCP Tool Defaults
@@ -240,14 +270,14 @@ codexlens-search download-models
 ## Architecture
 
 ```
-Query → [Embedder] → query vector
-         ├→ [FAISS Binary] → candidates (Hamming)
-         │     └→ [USearch/FAISS HNSW] → ranked IDs (cosine)
-         ├→ [FTS exact + fuzzy] → text matches
-         ├→ [GraphSearcher] → symbol neighbors (BFS)
-         └→ [ripgrep] → regex matches
-              └→ [RRF Fusion] → merged ranking
-                    └→ [Reranker] → final top-k
+Query -> [Embedder] -> query vector
+          |-> [FAISS Binary] -> candidates (Hamming)
+          |     +-> [USearch/FAISS HNSW] -> ranked IDs (cosine)
+          |-> [FTS exact + fuzzy] -> text matches
+          |-> [GraphSearcher] -> symbol neighbors (seeded from vector/FTS)
+          +-> [ripgrep] -> regex matches
+               +-> [RRF Fusion] -> merged ranking
+                     +-> [Reranker] -> final top-k
 ```
 
 ## Development
@@ -255,7 +285,7 @@ Query → [Embedder] → query vector
 ```bash
 git clone https://github.com/catlog22/codexlens-search.git
 cd codexlens-search
-uv pip install -e ".[dev]"
+pip install -e ".[dev,all]"
 pytest
 ```
 

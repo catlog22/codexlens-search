@@ -178,10 +178,44 @@ class Config:
             if "DmlExecutionProvider" in available:
                 log.info("DirectML detected via onnxruntime, using GPU for embedding")
                 return ["DmlExecutionProvider", "CPUExecutionProvider"]
+
+            # Windows: fastembed's onnxruntime dep may have overwritten
+            # onnxruntime-directml.  Auto-repair by reinstalling directml.
+            # C extensions can't hot-reload, so after install we verify via
+            # subprocess and tell the user to restart for GPU acceleration.
+            import sys
+            if sys.platform == "win32" and "DmlExecutionProvider" not in available:
+                if self._try_install_directml():
+                    log.warning(
+                        "onnxruntime-directml installed successfully. "
+                        "Restart the process to enable GPU acceleration. "
+                        "Using CPU for this session."
+                    )
         except ImportError:
             pass
 
         return ["CPUExecutionProvider"]
+
+    @staticmethod
+    def _try_install_directml() -> bool:
+        """Attempt to pip-install onnxruntime-directml to restore GPU support."""
+        import subprocess
+        import sys
+
+        log.info("DirectML not available — attempting auto-install of onnxruntime-directml")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install",
+                 "onnxruntime-directml", "--force-reinstall", "--no-deps", "--quiet"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                log.info("onnxruntime-directml installed successfully")
+                return True
+            log.warning("onnxruntime-directml install failed: %s", result.stderr.strip())
+        except Exception as exc:
+            log.warning("onnxruntime-directml auto-install error: %s", exc)
+        return False
 
     @classmethod
     def defaults(cls) -> "Config":

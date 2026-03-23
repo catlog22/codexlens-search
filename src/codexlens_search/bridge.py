@@ -62,6 +62,13 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
     for key in ("embed_model", "embed_api_url", "embed_api_key", "embed_api_model"):
         if overrides.get(key):
             kwargs[key] = overrides[key]
+    # Local model env vars
+    if "embed_model" not in kwargs and os.environ.get("CODEXLENS_EMBED_MODEL"):
+        kwargs["embed_model"] = os.environ["CODEXLENS_EMBED_MODEL"]
+    if os.environ.get("CODEXLENS_MODEL_CACHE_DIR"):
+        kwargs["model_cache_dir"] = os.environ["CODEXLENS_MODEL_CACHE_DIR"]
+    if os.environ.get("CODEXLENS_HF_MIRROR"):
+        kwargs["hf_mirror"] = os.environ["CODEXLENS_HF_MIRROR"]
     # Env vars as fallback
     if "embed_api_url" not in kwargs and os.environ.get("CODEXLENS_EMBED_API_URL"):
         kwargs["embed_api_url"] = os.environ["CODEXLENS_EMBED_API_URL"]

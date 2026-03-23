@@ -180,7 +180,10 @@ Format: `url|key|model,url|key|model,...` — replaces single-endpoint `EMBED_AP
 
 ### Local Models (Offline)
 
+No API needed — `fastembed` runs the model locally via ONNX runtime.
+
 ```bash
+# Pre-download models (optional — auto-downloads on first use)
 codexlens-search download-models
 ```
 
@@ -189,10 +192,54 @@ codexlens-search download-models
   "mcpServers": {
     "codexlens": {
       "command": "codexlens-mcp",
-      "env": {}
+      "env": {
+        "CODEXLENS_DEVICE": "directml"
+      }
     }
   }
 }
+```
+
+Default local model: `BAAI/bge-small-en-v1.5` (384d, ~33MB). To use a different model:
+
+```json
+{
+  "mcpServers": {
+    "codexlens": {
+      "command": "codexlens-mcp",
+      "env": {
+        "CODEXLENS_EMBED_MODEL": "BAAI/bge-base-en-v1.5",
+        "CODEXLENS_EMBED_DIM": "768",
+        "CODEXLENS_DEVICE": "directml"
+      }
+    }
+  }
+}
+```
+
+#### Available Local Models
+
+| Model | Dim | Size | Notes |
+|-------|-----|------|-------|
+| `BAAI/bge-small-en-v1.5` | 384 | ~33MB | Default, fastest |
+| `BAAI/bge-base-en-v1.5` | 768 | ~130MB | Better quality |
+| `BAAI/bge-large-en-v1.5` | 1024 | ~335MB | Best English quality |
+| `BAAI/bge-small-zh-v1.5` | 512 | ~46MB | Chinese, fast |
+| `BAAI/bge-large-zh-v1.5` | 1024 | ~335MB | Chinese, best quality |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~23MB | Lightweight general |
+
+> `CODEXLENS_EMBED_DIM` must match the model's output dimension. Mismatched dim will cause indexing errors.
+
+#### China Mirror
+
+```json
+"CODEXLENS_HF_MIRROR": "https://hf-mirror.com"
+```
+
+#### Custom Model Cache
+
+```json
+"CODEXLENS_MODEL_CACHE_DIR": "/path/to/cache"
 ```
 
 ## GPU
@@ -219,7 +266,16 @@ codexlens-search download-models
 
 ## Environment Variables
 
-### Embedding
+### Local Model
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEXLENS_EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | Local fastembed model name |
+| `CODEXLENS_EMBED_DIM` | `384` | Vector dimension (must match model) |
+| `CODEXLENS_MODEL_CACHE_DIR` | fastembed default | Model download cache directory |
+| `CODEXLENS_HF_MIRROR` | | HuggingFace mirror (e.g. `https://hf-mirror.com`) |
+
+### Embedding API (overrides local model)
 
 | Variable | Description |
 |----------|-------------|
@@ -227,7 +283,6 @@ codexlens-search download-models
 | `CODEXLENS_EMBED_API_KEY` | API key |
 | `CODEXLENS_EMBED_API_MODEL` | Model name (e.g. `text-embedding-3-small`) |
 | `CODEXLENS_EMBED_API_ENDPOINTS` | Multi-endpoint: `url\|key\|model,...` |
-| `CODEXLENS_EMBED_DIM` | Vector dimension (e.g. `1536`) |
 
 ### Reranker
 

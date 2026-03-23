@@ -157,6 +157,9 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["num_shards"] = int(os.environ["CODEXLENS_NUM_SHARDS"])
     if os.environ.get("CODEXLENS_MAX_LOADED_SHARDS"):
         kwargs["max_loaded_shards"] = int(os.environ["CODEXLENS_MAX_LOADED_SHARDS"])
+    # Query expansion
+    if os.environ.get("CODEXLENS_EXPANSION_ENABLED"):
+        kwargs["expansion_enabled"] = os.environ["CODEXLENS_EXPANSION_ENABLED"].lower() in ("true", "1", "yes")
     resolved = Path(db_path).resolve()
     kwargs["metadata_db_path"] = str(resolved / "metadata.db")
     return Config(**kwargs)

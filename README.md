@@ -154,6 +154,7 @@ Enabled by default. Disable with `CODEXLENS_AST_CHUNKING=false`.
 - **Symbol extraction** — 12 kinds: function, class, method, module, variable, constant, interface, type_alias, enum, struct, trait, property
 - **Cross-references** — import, call, inherit, type_ref edges
 - **Graph search** — seeded from vector/FTS results, BFS expansion with adaptive weights
+- **Query expansion** — two-hop symbol vocabulary expansion for natural language queries
 
 Languages: Python, JavaScript, TypeScript, Go, Java, Rust, C, C++, Ruby, PHP, Scala, Kotlin, Swift, C#, Bash, Lua, Haskell, Elixir, Erlang.
 
@@ -298,6 +299,7 @@ codexlens-search download-models
 |----------|---------|-------------|
 | `CODEXLENS_AST_CHUNKING` | `true` | AST chunking + symbol extraction |
 | `CODEXLENS_GITIGNORE_FILTERING` | `true` | Recursive `.gitignore` filtering |
+| `CODEXLENS_EXPANSION_ENABLED` | `true` | Two-hop query expansion for NL queries |
 | `CODEXLENS_DEVICE` | `auto` | `auto` / `cuda` / `directml` / `cpu` |
 | `CODEXLENS_AUTO_WATCH` | `false` | Auto-start file watcher after indexing |
 
@@ -325,10 +327,11 @@ codexlens-search download-models
 ## Architecture
 
 ```
-Query -> [Embedder] -> query vector
-          |-> [FAISS Binary] -> candidates (Hamming)
-          |     +-> [USearch/FAISS HNSW] -> ranked IDs (cosine)
-          |-> [FTS exact + fuzzy] -> text matches
+Query -> [QueryExpander] -> expanded query (NL queries only)
+          |-> [Embedder] -> query vector
+          |     |-> [FAISS Binary] -> candidates (Hamming)
+          |     |     +-> [USearch/FAISS HNSW] -> ranked IDs (cosine)
+          |     +-> [FTS exact + fuzzy] -> text matches
           |-> [GraphSearcher] -> symbol neighbors (seeded from vector/FTS)
           +-> [ripgrep] -> regex matches
                +-> [RRF Fusion] -> merged ranking

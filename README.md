@@ -268,6 +268,60 @@ Default local model: `BAAI/bge-small-en-v1.5` (384d, 512 tokens). To use a diffe
 | **Lightweight + long context** | `jinaai/jina-embeddings-v2-small-en` | 512d, 8192 tokens, 122MB |
 | **Fastest** | `BAAI/bge-small-en-v1.5` | 384d, 68MB, default |
 
+#### Manual Model Download
+
+If `codexlens-search download-model` fails (e.g. behind a firewall), you can download models manually:
+
+1. **Find the ONNX repo** — fastembed remaps model names. Check the actual HuggingFace repo:
+
+   | Model name | Actual HF repo |
+   |------------|----------------|
+   | `BAAI/bge-small-en-v1.5` | `qdrant/bge-small-en-v1.5-onnx-q` |
+   | `nomic-ai/nomic-embed-text-v1.5-Q` | `nomic-ai/nomic-embed-text-v1.5` |
+   | `jinaai/jina-embeddings-v2-base-code` | `jinaai/jina-embeddings-v2-base-code` |
+
+   Run `codexlens-search list-models --json` to check cache paths.
+
+2. **Download from HuggingFace** — clone or download the repo:
+
+   ```bash
+   # Using git (requires git-lfs)
+   git lfs install
+   git clone https://huggingface.co/qdrant/bge-small-en-v1.5-onnx-q
+
+   # Or download via huggingface-cli
+   pip install huggingface-hub
+   huggingface-cli download qdrant/bge-small-en-v1.5-onnx-q --local-dir ./model-files
+   ```
+
+3. **Place in cache directory** — the cache follows HuggingFace Hub layout:
+
+   ```
+   <cache_dir>/
+     models--<org>--<model>/
+       snapshots/
+         <commit_hash>/
+           model_optimized.onnx   (or model.onnx)
+           tokenizer.json
+           config.json
+           special_tokens_map.json
+           tokenizer_config.json
+   ```
+
+   Default cache locations:
+   - **Windows**: `%LOCALAPPDATA%\fastembed_cache` or `%TEMP%\fastembed_cache`
+   - **Linux/macOS**: `/tmp/fastembed_cache`
+   - **Custom**: set `CODEXLENS_MODEL_CACHE_DIR`
+
+   Example for `BAAI/bge-small-en-v1.5`:
+   ```bash
+   mkdir -p /tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q/snapshots/main/
+   cp model-files/*.onnx model-files/*.json \
+      /tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q/snapshots/main/
+   ```
+
+4. **Verify** — run `codexlens-search list-models` and check the `●` status.
+
 #### China Mirror
 
 ```json

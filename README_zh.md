@@ -268,6 +268,63 @@ codexlens-search download-model nomic-ai/nomic-embed-text-v1.5-Q
 | **轻量+长上下文** | `jinaai/jina-embeddings-v2-small-en` | 512d，8192 tokens，122MB |
 | **最快** | `BAAI/bge-small-en-v1.5` | 384d，68MB，默认 |
 
+#### 手动下载模型
+
+如果 `codexlens-search download-model` 失败（例如网络受限），可以手动下载：
+
+1. **找到 ONNX 仓库** — fastembed 会重映射模型名。实际 HuggingFace 仓库：
+
+   | 模型名 | 实际 HF 仓库 |
+   |--------|-------------|
+   | `BAAI/bge-small-en-v1.5` | `qdrant/bge-small-en-v1.5-onnx-q` |
+   | `nomic-ai/nomic-embed-text-v1.5-Q` | `nomic-ai/nomic-embed-text-v1.5` |
+   | `jinaai/jina-embeddings-v2-base-code` | `jinaai/jina-embeddings-v2-base-code` |
+
+   运行 `codexlens-search list-models --json` 查看缓存路径。
+
+2. **从 HuggingFace 下载**：
+
+   ```bash
+   # 使用 git（需要 git-lfs）
+   git lfs install
+   git clone https://huggingface.co/qdrant/bge-small-en-v1.5-onnx-q
+
+   # 或使用 huggingface-cli
+   pip install huggingface-hub
+   huggingface-cli download qdrant/bge-small-en-v1.5-onnx-q --local-dir ./model-files
+
+   # 国内可用 hf-mirror.com
+   HF_ENDPOINT=https://hf-mirror.com huggingface-cli download qdrant/bge-small-en-v1.5-onnx-q --local-dir ./model-files
+   ```
+
+3. **放入缓存目录** — 缓存遵循 HuggingFace Hub 布局：
+
+   ```
+   <cache_dir>/
+     models--<org>--<model>/
+       snapshots/
+         <commit_hash>/
+           model_optimized.onnx   （或 model.onnx）
+           tokenizer.json
+           config.json
+           special_tokens_map.json
+           tokenizer_config.json
+   ```
+
+   默认缓存位置：
+   - **Windows**：`%LOCALAPPDATA%\fastembed_cache` 或 `%TEMP%\fastembed_cache`
+   - **Linux/macOS**：`/tmp/fastembed_cache`
+   - **自定义**：设置 `CODEXLENS_MODEL_CACHE_DIR`
+
+   以 `BAAI/bge-small-en-v1.5` 为例：
+   ```bash
+   mkdir -p /tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q/snapshots/main/
+   cp model-files/*.onnx model-files/*.json \
+      /tmp/fastembed_cache/models--qdrant--bge-small-en-v1.5-onnx-q/snapshots/main/
+   ```
+
+4. **验证** — 运行 `codexlens-search list-models`，确认状态显示为 `●`。
+
 #### 国内镜像
 
 ```json

@@ -4,6 +4,8 @@ Semantic code search engine with MCP server for Claude Code.
 
 Hybrid search: vector + FTS + AST graph + ripgrep regex — with RRF fusion and reranking.
 
+[中文文档](README_zh.md)
+
 ## Quick Start
 
 ```bash
@@ -184,8 +186,14 @@ Format: `url|key|model,url|key|model,...` — replaces single-endpoint `EMBED_AP
 No API needed — `fastembed` runs the model locally via ONNX runtime.
 
 ```bash
+# List available models
+codexlens-search list-models
+
 # Pre-download models (optional — auto-downloads on first use)
 codexlens-search download-models
+
+# Download a specific model
+codexlens-search download-model nomic-ai/nomic-embed-text-v1.5-Q
 ```
 
 ```json
@@ -201,7 +209,7 @@ codexlens-search download-models
 }
 ```
 
-Default local model: `BAAI/bge-small-en-v1.5` (384d, ~33MB). To use a different model:
+Default local model: `BAAI/bge-small-en-v1.5` (384d, 512 tokens). To use a different model:
 
 ```json
 {
@@ -209,7 +217,7 @@ Default local model: `BAAI/bge-small-en-v1.5` (384d, ~33MB). To use a different 
     "codexlens": {
       "command": "codexlens-mcp",
       "env": {
-        "CODEXLENS_EMBED_MODEL": "BAAI/bge-base-en-v1.5",
+        "CODEXLENS_EMBED_MODEL": "nomic-ai/nomic-embed-text-v1.5-Q",
         "CODEXLENS_EMBED_DIM": "768",
         "CODEXLENS_DEVICE": "directml"
       }
@@ -220,16 +228,45 @@ Default local model: `BAAI/bge-small-en-v1.5` (384d, ~33MB). To use a different 
 
 #### Available Local Models
 
-| Model | Dim | Size | Notes |
-|-------|-----|------|-------|
-| `BAAI/bge-small-en-v1.5` | 384 | ~33MB | Default, fastest |
-| `BAAI/bge-base-en-v1.5` | 768 | ~130MB | Better quality |
-| `BAAI/bge-large-en-v1.5` | 1024 | ~335MB | Best English quality |
-| `BAAI/bge-small-zh-v1.5` | 512 | ~46MB | Chinese, fast |
-| `BAAI/bge-large-zh-v1.5` | 1024 | ~335MB | Chinese, best quality |
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | ~23MB | Lightweight general |
+**General**
+
+| Model | Dim | Tokens | Size | Notes |
+|-------|-----|--------|------|-------|
+| `BAAI/bge-small-en-v1.5` | 384 | 512 | 68MB | Default, fastest |
+| `BAAI/bge-base-en-v1.5` | 768 | 512 | 215MB | Better quality |
+| `BAAI/bge-large-en-v1.5` | 1024 | 512 | 1.2GB | Best English quality |
+| `sentence-transformers/all-MiniLM-L6-v2` | 384 | 256 | 92MB | Lightweight general |
+| `snowflake/snowflake-arctic-embed-xs` | 384 | 512 | 92MB | Compact, good quality |
+| `snowflake/snowflake-arctic-embed-s` | 384 | 512 | 133MB | Light, better than xs |
+
+**Code / Long Context**
+
+| Model | Dim | Tokens | Size | Notes |
+|-------|-----|--------|------|-------|
+| `jinaai/jina-embeddings-v2-base-code` | 768 | 8192 | 655MB | Code-specialized, 30+ programming languages |
+| `nomic-ai/nomic-embed-text-v1.5-Q` | 768 | 8192 | 133MB | Quantized, best value for code |
+| `nomic-ai/nomic-embed-text-v1.5` | 768 | 8192 | 532MB | Long context, code + text |
+| `jinaai/jina-embeddings-v2-small-en` | 512 | 8192 | 122MB | Long context, lightweight |
+
+**Chinese / Multilingual**
+
+| Model | Dim | Tokens | Size | Notes |
+|-------|-----|--------|------|-------|
+| `BAAI/bge-small-zh-v1.5` | 512 | 512 | 92MB | Chinese, fast |
+| `BAAI/bge-large-zh-v1.5` | 1024 | 512 | 1.2GB | Chinese, best quality |
+| `jinaai/jina-embeddings-v2-base-zh` | 768 | 8192 | 655MB | Chinese-English bilingual |
+| `intfloat/multilingual-e5-large` | 1024 | 512 | 2.2GB | 100+ languages |
 
 > `CODEXLENS_EMBED_DIM` must match the model's output dimension. Mismatched dim will cause indexing errors.
+
+#### Recommended for Code Search
+
+| Use case | Model | Why |
+|----------|-------|-----|
+| **Best value** | `nomic-ai/nomic-embed-text-v1.5-Q` | 768d, 8192 tokens, only 133MB |
+| **Code-specialized** | `jinaai/jina-embeddings-v2-base-code` | Trained on 30+ programming languages |
+| **Lightweight + long context** | `jinaai/jina-embeddings-v2-small-en` | 512d, 8192 tokens, 122MB |
+| **Fastest** | `BAAI/bge-small-en-v1.5` | 384d, 68MB, default |
 
 #### China Mirror
 
@@ -263,6 +300,8 @@ codexlens-search --db-path .codexlens search -q "auth handler" -k 10
 codexlens-search --db-path .codexlens status
 codexlens-search list-models
 codexlens-search download-models
+codexlens-search download-model BAAI/bge-base-en-v1.5
+codexlens-search delete-model BAAI/bge-small-en-v1.5
 ```
 
 ## Environment Variables

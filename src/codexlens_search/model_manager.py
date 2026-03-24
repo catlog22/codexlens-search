@@ -17,6 +17,31 @@ log = logging.getLogger(__name__)
 _EMBED_MODEL_FILES = ["*.onnx", "*.json"]
 _RERANK_MODEL_FILES = ["*.onnx", "*.json"]
 
+# Known model metadata: {name: (dim, size_mb, language, max_tokens, notes)}
+_MODEL_META: dict[str, tuple[int, int, str, int, str]] = {
+    # --- Embedding: general ---
+    "BAAI/bge-small-en-v1.5":                     (384,   68,  "en",    512, "Default, fastest"),
+    "BAAI/bge-base-en-v1.5":                      (768,  215,  "en",    512, "Better quality"),
+    "BAAI/bge-large-en-v1.5":                     (1024, 1228, "en",    512, "Best English quality"),
+    "BAAI/bge-small-zh-v1.5":                     (512,   92,  "zh",    512, "Chinese, fast"),
+    "BAAI/bge-large-zh-v1.5":                     (1024, 1228, "zh",    512, "Chinese, best quality"),
+    "sentence-transformers/all-MiniLM-L6-v2":     (384,   92,  "en",    256, "Lightweight general"),
+    "snowflake/snowflake-arctic-embed-xs":        (384,   92,  "en",    512, "Compact, good quality"),
+    "snowflake/snowflake-arctic-embed-s":         (384,  133,  "en",    512, "Light, better than xs"),
+    # --- Embedding: code / long context ---
+    "jinaai/jina-embeddings-v2-base-code":        (768,  655,  "code",  8192, "Code-specialized, 30+ langs"),
+    "jinaai/jina-embeddings-v2-small-en":         (512,  122,  "en",    8192, "Long context, good for code"),
+    "nomic-ai/nomic-embed-text-v1.5":             (768,  532,  "en",    8192, "Long context, code+text"),
+    "nomic-ai/nomic-embed-text-v1.5-Q":           (768,  133,  "en",    8192, "Quantized, best value for code"),
+    # --- Embedding: multilingual ---
+    "jinaai/jina-embeddings-v2-base-zh":          (768,  655,  "zh/en", 8192, "Chinese-English bilingual"),
+    "intfloat/multilingual-e5-large":             (1024, 2293, "multi", 512, "100+ languages"),
+    # --- Reranker ---
+    "Xenova/ms-marco-MiniLM-L-6-v2":             (0,    23,   "en",    0, "Lightweight reranker"),
+    "BAAI/bge-reranker-base":                     (0,   110,   "en",    0, "BGE reranker"),
+    "BAAI/bge-reranker-v2-m3":                    (0,   560,   "multi", 0, "Multilingual reranker"),
+}
+
 
 def _resolve_cache_dir(config: Config) -> str | None:
     """Return cache_dir for fastembed, or None for default."""
@@ -146,13 +171,26 @@ def list_known_models(config: Config) -> list[dict]:
     cache_dir = _resolve_cache_dir(config)
     base = cache_dir or _default_fastembed_cache()
 
-    # Known embedding models
+    # Known embedding models (grouped: general → code/long → multilingual)
     embed_models = [
         config.embed_model,
+        # General
         "BAAI/bge-small-en-v1.5",
         "BAAI/bge-base-en-v1.5",
         "BAAI/bge-large-en-v1.5",
         "sentence-transformers/all-MiniLM-L6-v2",
+        "snowflake/snowflake-arctic-embed-xs",
+        "snowflake/snowflake-arctic-embed-s",
+        # Code / long context
+        "jinaai/jina-embeddings-v2-base-code",
+        "jinaai/jina-embeddings-v2-small-en",
+        "nomic-ai/nomic-embed-text-v1.5",
+        "nomic-ai/nomic-embed-text-v1.5-Q",
+        # Chinese / multilingual
+        "BAAI/bge-small-zh-v1.5",
+        "BAAI/bge-large-zh-v1.5",
+        "jinaai/jina-embeddings-v2-base-zh",
+        "intfloat/multilingual-e5-large",
     ]
 
     # Known reranker models
@@ -166,29 +204,33 @@ def list_known_models(config: Config) -> list[dict]:
     seen: set[str] = set()
     results: list[dict] = []
 
+    def _build_entry(name: str, model_type: str, is_default: bool) -> dict:
+        cache_path = _find_model_cache_path(name, base)
+        meta = _MODEL_META.get(name, (0, 0, "", 0, ""))
+        return {
+            "name": name,
+            "type": model_type,
+            "dim": meta[0],
+            "size_mb": meta[1],
+            "lang": meta[2],
+            "max_tokens": meta[3],
+            "notes": meta[4],
+            "default": is_default,
+            "installed": cache_path is not None,
+            "cache_path": cache_path,
+        }
+
     for name in embed_models:
         if name in seen:
             continue
         seen.add(name)
-        cache_path = _find_model_cache_path(name, base)
-        results.append({
-            "name": name,
-            "type": "embedding",
-            "installed": cache_path is not None,
-            "cache_path": cache_path,
-        })
+        results.append(_build_entry(name, "embedding", name == config.embed_model))
 
     for name in reranker_models:
         if name in seen:
             continue
         seen.add(name)
-        cache_path = _find_model_cache_path(name, base)
-        results.append({
-            "name": name,
-            "type": "reranker",
-            "installed": cache_path is not None,
-            "cache_path": cache_path,
-        })
+        results.append(_build_entry(name, "reranker", name == config.reranker_model))
 
     return results
 

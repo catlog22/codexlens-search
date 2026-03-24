@@ -8,10 +8,12 @@ from ..config import Config
 from .base import BaseEmbedder
 
 EMBED_PROFILES = {
-    "small": "BAAI/bge-small-en-v1.5",                    # 384d
-    "base": "BAAI/bge-base-en-v1.5",                      # 768d
-    "large": "BAAI/bge-large-en-v1.5",                    # 1024d
-    "code": "jinaai/jina-embeddings-v2-base-code",         # 768d
+    "small": "BAAI/bge-small-en-v1.5",                    # 384d, 512 tokens
+    "base": "BAAI/bge-base-en-v1.5",                      # 768d, 512 tokens
+    "large": "BAAI/bge-large-en-v1.5",                    # 1024d, 512 tokens
+    "code": "jinaai/jina-embeddings-v2-base-code",         # 768d, 8192 tokens
+    "code-light": "nomic-ai/nomic-embed-text-v1.5-Q",     # 768d, 8192 tokens, quantized
+    "long": "jinaai/jina-embeddings-v2-small-en",          # 512d, 8192 tokens
 }
 
 

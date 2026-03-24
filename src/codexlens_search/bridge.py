@@ -516,7 +516,43 @@ def cmd_list_models(args: argparse.Namespace) -> None:
 
     config = _create_config(args)
     models = model_manager.list_known_models(config)
-    _json_output(models)
+
+    if getattr(args, "json", False):
+        _json_output(models)
+        return
+
+    embed = [m for m in models if m["type"] == "embedding"]
+    rerank = [m for m in models if m["type"] == "reranker"]
+
+    W = 95
+
+    def _table(title: str, rows: list[dict], show_dim: bool) -> None:
+        print(f"\n  {title}")
+        print(f"  {'─' * W}")
+        if show_dim:
+            hdr = f"  {'':2} {'Model':<44} {'Dim':>5} {'Tokens':>6} {'Size':>7} {'Lang':<6} {'Notes'}"
+        else:
+            hdr = f"  {'':2} {'Model':<44} {'Size':>7} {'Lang':<6} {'Notes'}"
+        print(hdr)
+        print(f"  {'─' * W}")
+        for m in rows:
+            mark = "●" if m["installed"] else "○"
+            tag = " *" if m.get("default") else ""
+            name = m["name"] + tag
+            size = f"{m['size_mb']}MB" if m["size_mb"] else "-"
+            if show_dim:
+                dim = str(m["dim"]) if m["dim"] else "-"
+                tokens = str(m.get("max_tokens") or "-")
+                print(f"  {mark:2} {name:<44} {dim:>5} {tokens:>6} {size:>7} {m['lang']:<6} {m['notes']}")
+            else:
+                print(f"  {mark:2} {name:<44} {size:>7} {m['lang']:<6} {m['notes']}")
+        print()
+
+    _table("Embedding Models", embed, show_dim=True)
+    _table("Reranker Models", rerank, show_dim=False)
+    print(f"  ● installed  ○ not installed  * current default")
+    print(f"  Cache: {model_manager._resolve_cache_dir(config) or model_manager._default_fastembed_cache()}")
+    print()
 
 
 def cmd_download_model(args: argparse.Namespace) -> None:
@@ -656,7 +692,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument("--embed-model", help="Override embed model name")
 
     # list-models
-    sub.add_parser("list-models", help="List known models with cache status")
+    p_list = sub.add_parser("list-models", help="List known models with cache status")
+    p_list.add_argument("--json", action="store_true", help="Output as JSON")
 
     # download-model (single model by name)
     p_dl_single = sub.add_parser("download-model", help="Download a single model by name")

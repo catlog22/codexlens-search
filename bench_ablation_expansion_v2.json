@@ -1,0 +1,3044 @@
+{
+  "experiment": "Query Expansion Ablation V2",
+  "configs": {
+    "Baseline": {
+      "method": "none",
+      "elapsed": 24.46,
+      "avg_recall": 0.8333,
+      "avg_mrr": 0.9,
+      "avg_ndcg5": 0.8236,
+      "top3_rate": 0.95,
+      "zero_recall": 1,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6367,
+          "found": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.0,
+          "mrr": 0.0,
+          "top3_hit": false,
+          "ndcg5": 0.0,
+          "found": [
+            "embed/api.py",
+            "core/faiss_index.py",
+            "embed/local.py",
+            "rerank/local.py",
+            "bridge.py",
+            "indexing/pipeline.py",
+            "parsers/references.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.7654,
+          "found": [
+            "embed/api.py",
+            "bridge.py",
+            "rerank/api.py",
+            "config.py",
+            "indexing/pipeline.py",
+            "model_manager.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.5,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.3869,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py",
+            "search/fusion.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py",
+            "parsers/symbols.py",
+            "parsers/references.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py",
+            "indexing/pipeline.py",
+            "core/faiss_index.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "search/graph.py",
+            "mcp_server.py",
+            "parsers/references.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.6309,
+          "found": [
+            "core/faiss_index.py",
+            "core/binary.py",
+            "core/base.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "config.py",
+            "bridge.py",
+            "embed/local.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "search/pipeline.py",
+            "embed/api.py",
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.906,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "mcp_server.py",
+            "indexing/metadata.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py",
+            "bridge.py"
+          ]
+        }
+      ]
+    },
+    "+VecV1": {
+      "method": "vec_v1",
+      "elapsed": 22.3,
+      "avg_recall": 0.825,
+      "avg_mrr": 0.95,
+      "avg_ndcg5": 0.8375,
+      "top3_rate": 1.0,
+      "zero_recall": 0,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [
+            "_semantic_search",
+            "indexing",
+            "coarse_search",
+            "_binary_coarse_search",
+            "parsers",
+            "_create_reranker",
+            "_search_thorough"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6367,
+          "found": [
+            "search/pipeline.py",
+            "search/fusion.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [
+            "BaseEmbedder",
+            "ChangeType",
+            "BinaryStore",
+            "MetadataStore",
+            "APIEmbedder",
+            "BaseReranker",
+            "GitignoreAwareMatcher",
+            "_traverse"
+          ],
+          "recall": 0.3333333333333333,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.4693,
+          "found": [
+            "core/base.py",
+            "embed/api.py",
+            "core/binary.py",
+            "core/shard.py",
+            "embed/local.py",
+            "indexing/pipeline.py",
+            "rerank/local.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [
+            "_search_shard",
+            "shard_manager",
+            "ShardManager",
+            "_default_fastembed_cache",
+            "_search_fast",
+            "_ensure_capacity",
+            "FastEmbedEmbedder",
+            "coarse_search"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_smart_chunk",
+            "FastEmbedEmbedder",
+            "_vector_search",
+            "APIEmbedder",
+            "parsers",
+            "_estimate_tokens"
+          ],
+          "recall": 1.0,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.7328,
+          "found": [
+            "model_manager.py",
+            "embed/api.py",
+            "bridge.py",
+            "embed/local.py",
+            "rerank/local.py",
+            "config.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "file_watcher",
+            "FileEvent",
+            "file_needs_update",
+            "cmd_watch",
+            "_purge_index_files",
+            "_cleanup_watchers"
+          ],
+          "recall": 0.5,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.3869,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "is_file_excluded",
+            "_extract_file_symbols",
+            "_extract_file_refs",
+            "_chunk_code",
+            "BinaryStore",
+            "get_file_tier",
+            "get_chunk_ids_for_file"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "chunk_by_ast",
+            "_smart_chunk",
+            "_should_extract_symbols",
+            "_extract_java_refs",
+            "get_symbols_by_chunk",
+            "extract_references",
+            "delete_symbols_by_chunk_ids"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py",
+            "search/fts.py",
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "_vector_search",
+            "_has_vector_index",
+            "coarse_search",
+            "indexing",
+            "_binary_coarse_search",
+            "incremental_indexer",
+            "_focused_index_and_search",
+            "_semantic_search"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [
+            "_call_api_with_retry",
+            "resolve_embed_providers",
+            "APIEmbedder",
+            "resolve_refs",
+            "_resolve_ref_chunk",
+            "_rerank_and_build",
+            "has_errors"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [
+            "get_adaptive_weights",
+            "_semantic_search",
+            "indexing",
+            "_binary_coarse_search",
+            "search_code",
+            "coarse_search",
+            "_search_balanced",
+            "_smart_chunk"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "_inject_context_headers",
+            "chunk_by_ast",
+            "get_chunk_ids_by_path",
+            "register_chunks",
+            "get_chunk_ids_for_file",
+            "_chunk_text",
+            "_sub_chunk_lines"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_semantic_search",
+            "_traverse",
+            "_extract_go_refs",
+            "_extract_python_refs",
+            "search_code",
+            "_should_extract_symbols"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "search/graph.py",
+            "bridge.py",
+            "parsers/references.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_default_fastembed_cache",
+            "_find_model_cache_path",
+            "_apply_mirror",
+            "FastEmbedEmbedder",
+            "_ensure_loaded",
+            "MetadataStore"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [
+            "_binary_coarse_search",
+            "_vector_search",
+            "_quantize",
+            "_quantize_single",
+            "FastEmbedEmbedder",
+            "BinaryStore",
+            "get_adaptive_weights"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "core/binary.py",
+            "core/faiss_index.py",
+            "core/base.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_uses_gpu",
+            "embed_batch",
+            "_ensure_model_onnx",
+            "FastEmbedEmbedder",
+            "ensure_model",
+            "_has_faiss_gpu",
+            "_vector_search"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "config.py",
+            "embed/api.py",
+            "model_manager.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "mcp_server",
+            "index_project",
+            "create_pipeline",
+            "_search_fast",
+            "_create_pipeline",
+            "cmd_search",
+            "_get_pipelines",
+            "_focused_index_and_search"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_embed_worker",
+            "_smart_chunk",
+            "_chunk_code",
+            "search_from_chunks",
+            "chunker",
+            "chunk_by_ast",
+            "embed_batch",
+            "register_chunks"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "embed/api.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_find_seed_symbols",
+            "GraphSearcher",
+            "_binary_coarse_search",
+            "search_code",
+            "_semantic_search",
+            "_search_symbol",
+            "_chunk_code"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "incremental_indexer",
+            "IncrementalIndexer",
+            "file_needs_update",
+            "_index_files_with_metadata",
+            "_purge_index_files"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.7654,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "indexing/metadata.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "APIEmbedder",
+            "resolve_embed_providers",
+            "embed_batch",
+            "APIReranker",
+            "FastEmbedReranker",
+            "FastEmbedEmbedder"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py"
+          ]
+        }
+      ]
+    },
+    "+VecV2": {
+      "method": "vec_v2",
+      "elapsed": 29.77,
+      "avg_recall": 0.85,
+      "avg_mrr": 0.975,
+      "avg_ndcg5": 0.8623,
+      "top3_rate": 1.0,
+      "zero_recall": 0,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [
+            "_semantic_search",
+            "indexing",
+            "coarse_search",
+            "_binary_coarse_search",
+            "parsers"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.5856,
+          "found": [
+            "search/pipeline.py",
+            "search/graph.py",
+            "search/fusion.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [
+            "BaseEmbedder",
+            "ChangeType",
+            "BinaryStore",
+            "MetadataStore",
+            "APIEmbedder"
+          ],
+          "recall": 0.3333333333333333,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.4693,
+          "found": [
+            "core/base.py",
+            "embed/api.py",
+            "core/factory.py",
+            "search/pipeline.py",
+            "core/binary.py",
+            "embed/local.py",
+            "core/shard.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [
+            "_search_shard",
+            "shard_manager",
+            "ShardManager",
+            "_default_fastembed_cache",
+            "_search_fast"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_smart_chunk",
+            "FastEmbedEmbedder",
+            "_vector_search"
+          ],
+          "recall": 1.0,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.6797,
+          "found": [
+            "model_manager.py",
+            "embed/local.py",
+            "rerank/local.py",
+            "embed/api.py",
+            "bridge.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "file_watcher",
+            "FileEvent",
+            "file_needs_update"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "watcher/file_watcher.py",
+            "watcher/incremental_indexer.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "is_file_excluded",
+            "_extract_file_symbols",
+            "_extract_file_refs",
+            "_chunk_code",
+            "BinaryStore"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "chunk_by_ast",
+            "_smart_chunk",
+            "_should_extract_symbols",
+            "_extract_java_refs"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "_vector_search",
+            "_has_vector_index",
+            "coarse_search",
+            "indexing",
+            "_binary_coarse_search"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [
+            "_call_api_with_retry",
+            "resolve_embed_providers",
+            "APIEmbedder",
+            "resolve_refs",
+            "_resolve_ref_chunk"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [
+            "get_adaptive_weights",
+            "_semantic_search",
+            "indexing",
+            "_binary_coarse_search",
+            "search_code"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "_inject_context_headers",
+            "chunk_by_ast",
+            "get_chunk_ids_by_path",
+            "register_chunks"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_semantic_search",
+            "_traverse",
+            "_extract_go_refs",
+            "_extract_python_refs"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/graph.py",
+            "parsers/references.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_default_fastembed_cache",
+            "_find_model_cache_path",
+            "_apply_mirror"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [
+            "_binary_coarse_search",
+            "_vector_search",
+            "_quantize",
+            "_quantize_single",
+            "FastEmbedEmbedder"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "core/binary.py",
+            "core/faiss_index.py",
+            "core/base.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_uses_gpu",
+            "embed_batch",
+            "_ensure_model_onnx",
+            "FastEmbedEmbedder",
+            "ensure_model"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "config.py",
+            "bridge.py",
+            "embed/api.py",
+            "model_manager.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "mcp_server",
+            "index_project",
+            "create_pipeline",
+            "_search_fast",
+            "_create_pipeline"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_embed_worker",
+            "_smart_chunk",
+            "_chunk_code",
+            "search_from_chunks",
+            "chunker"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "embed/api.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_find_seed_symbols",
+            "GraphSearcher",
+            "_binary_coarse_search",
+            "search_code",
+            "_semantic_search"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "incremental_indexer",
+            "IncrementalIndexer",
+            "file_needs_update"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6714,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "watcher/file_watcher.py",
+            "core/shard.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "APIEmbedder",
+            "resolve_embed_providers",
+            "embed_batch",
+            "APIReranker",
+            "FastEmbedReranker"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py"
+          ]
+        }
+      ]
+    },
+    "+TwoHop": {
+      "method": "two_hop",
+      "elapsed": 48.78,
+      "avg_recall": 0.8917,
+      "avg_mrr": 0.9667,
+      "avg_ndcg5": 0.8935,
+      "top3_rate": 1.0,
+      "zero_recall": 0,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [
+            "_semantic_search",
+            "indexing",
+            "coarse_search",
+            "_binary_coarse_search",
+            "parsers",
+            "BaseBinaryIndex",
+            "add",
+            "save"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6367,
+          "found": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "mcp_server.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [
+            "BaseEmbedder",
+            "ChangeType",
+            "BinaryStore",
+            "MetadataStore",
+            "APIEmbedder",
+            "__init__",
+            "embed_single",
+            "embed_batch",
+            "FileEvent"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.7039,
+          "found": [
+            "core/base.py",
+            "embed/api.py",
+            "embed/base.py",
+            "core/shard.py",
+            "embed/local.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [
+            "_search_shard",
+            "shard_manager",
+            "ShardManager",
+            "_default_fastembed_cache",
+            "_search_fast",
+            "_dir_has_onnx"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_smart_chunk",
+            "FastEmbedEmbedder",
+            "_vector_search",
+            "__init__",
+            "_load",
+            "_default_fastembed_cache"
+          ],
+          "recall": 1.0,
+          "mrr": 0.3333333333333333,
+          "top3_hit": true,
+          "ndcg5": 0.6183,
+          "found": [
+            "model_manager.py",
+            "rerank/local.py",
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "file_watcher",
+            "FileEvent",
+            "file_needs_update",
+            "ChangeType",
+            "__init__"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "watcher/file_watcher.py",
+            "watcher/incremental_indexer.py",
+            "watcher/events.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "is_file_excluded",
+            "_extract_file_symbols",
+            "_extract_file_refs",
+            "_chunk_code",
+            "BinaryStore",
+            "_should_extract_symbols"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py",
+            "search/fusion.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "chunk_by_ast",
+            "_smart_chunk",
+            "_should_extract_symbols",
+            "_extract_java_refs",
+            "_extract_file_refs",
+            "_walk"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "_vector_search",
+            "_has_vector_index",
+            "coarse_search",
+            "indexing",
+            "_binary_coarse_search",
+            "BaseBinaryIndex",
+            "add",
+            "save"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py",
+            "core/binary.py",
+            "core/factory.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [
+            "_call_api_with_retry",
+            "resolve_embed_providers",
+            "APIEmbedder",
+            "resolve_refs",
+            "_resolve_ref_chunk",
+            "__init__"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [
+            "get_adaptive_weights",
+            "_semantic_search",
+            "indexing",
+            "_binary_coarse_search",
+            "search_code"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "_inject_context_headers",
+            "chunk_by_ast",
+            "get_chunk_ids_by_path",
+            "register_chunks",
+            "get_all_chunk_ids"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_semantic_search",
+            "_traverse",
+            "_extract_go_refs",
+            "_extract_python_refs",
+            "_walk",
+            "__init__"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/graph.py",
+            "parsers/references.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_default_fastembed_cache",
+            "_find_model_cache_path",
+            "_apply_mirror"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [
+            "_binary_coarse_search",
+            "_vector_search",
+            "_quantize",
+            "_quantize_single",
+            "FastEmbedEmbedder",
+            "_ensure_capacity",
+            "_ensure_loaded",
+            "__init__",
+            "_load"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "core/binary.py",
+            "core/faiss_index.py",
+            "core/base.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "_uses_gpu",
+            "embed_batch",
+            "_ensure_model_onnx",
+            "FastEmbedEmbedder",
+            "ensure_model",
+            "BaseEmbedder",
+            "embed_single",
+            "__init__",
+            "_load"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "config.py",
+            "bridge.py",
+            "embed/api.py",
+            "embed/base.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "mcp_server",
+            "index_project",
+            "create_pipeline",
+            "_search_fast",
+            "_create_pipeline"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_embed_worker",
+            "_smart_chunk",
+            "_chunk_code",
+            "search_from_chunks",
+            "chunker"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "embed/api.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_find_seed_symbols",
+            "GraphSearcher",
+            "_binary_coarse_search",
+            "search_code",
+            "_semantic_search",
+            "__init__",
+            "_score_edge"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "file_needs_update_fast",
+            "incremental_indexer",
+            "IncrementalIndexer",
+            "file_needs_update",
+            "__init__"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.7654,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "indexing/metadata.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "APIEmbedder",
+            "resolve_embed_providers",
+            "embed_batch",
+            "APIReranker",
+            "FastEmbedReranker",
+            "__init__",
+            "BaseEmbedder",
+            "embed_single",
+            "score_pairs",
+            "_load"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py"
+          ]
+        }
+      ]
+    },
+    "+Concept": {
+      "method": "concept",
+      "elapsed": 30.91,
+      "avg_recall": 0.85,
+      "avg_mrr": 0.975,
+      "avg_ndcg5": 0.8615,
+      "top3_rate": 1.0,
+      "zero_recall": 0,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "FastEmbedReranker",
+            "TextCrossEncoder",
+            "score_pairs",
+            "reciprocal_rank_fusion",
+            "get_adaptive_weights",
+            "detect_query_intent"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6367,
+          "found": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "search/graph.py",
+            "core/shard.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [
+            "ABC",
+            "abstractmethod",
+            "BaseEmbedder",
+            "BaseReranker",
+            "BaseANNIndex",
+            "BaseBinaryIndex"
+          ],
+          "recall": 0.3333333333333333,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.4693,
+          "found": [
+            "core/base.py",
+            "core/factory.py",
+            "embed/api.py",
+            "rerank/local.py",
+            "embed/local.py",
+            "core/shard.py",
+            "rerank/__init__.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [
+            "ShardManager",
+            "max_loaded_shards",
+            "_evict_lru"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "bridge.py",
+            "embed/local.py",
+            "embed/__init__.py",
+            "model_manager.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "FileEvent",
+            "debounce",
+            "events",
+            "IncrementalIndexer",
+            "file_needs_update",
+            "metadata",
+            "sync"
+          ],
+          "recall": 0.5,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.3869,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py",
+            "search/fusion.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py",
+            "parsers/symbols.py",
+            "parsers/references.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py",
+            "indexing/pipeline.py",
+            "core/faiss_index.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "FastEmbedReranker",
+            "TextCrossEncoder",
+            "score_pairs"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [
+            "reciprocal_rank_fusion",
+            "get_adaptive_weights",
+            "detect_query_intent"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py",
+            "search/__init__.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "search/graph.py",
+            "mcp_server.py",
+            "parsers/references.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [
+            "_quantize",
+            "coarse_search",
+            "BinaryStore"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "core/binary.py",
+            "core/faiss_index.py",
+            "core/base.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "config.py",
+            "embed/local.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "embed/api.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_traverse",
+            "search_from_chunks",
+            "_find_seed_symbols"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [
+            "IncrementalIndexer",
+            "file_needs_update"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6714,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "mcp_server.py",
+            "watcher/file_watcher.py",
+            "indexing/metadata.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py"
+          ]
+        }
+      ]
+    },
+    "+VecV2+Concept": {
+      "method": "vec_v2_concept",
+      "elapsed": 43.32,
+      "avg_recall": 0.85,
+      "avg_mrr": 0.975,
+      "avg_ndcg5": 0.8702,
+      "top3_rate": 1.0,
+      "zero_recall": 0,
+      "queries": [
+        {
+          "id": "CQ1",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "core/binary.py",
+            "core/index.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "FastEmbedReranker",
+            "TextCrossEncoder",
+            "score_pairs",
+            "reciprocal_rank_fusion",
+            "get_adaptive_weights",
+            "detect_query_intent",
+            "_semantic_search",
+            "indexing",
+            "coarse_search",
+            "_binary_coarse_search",
+            "parsers"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6367,
+          "found": [
+            "search/pipeline.py",
+            "search/fusion.py",
+            "search/graph.py",
+            "mcp_server.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ2",
+          "category": "cross-module",
+          "difficulty": "hard",
+          "expected": [
+            "core/base.py",
+            "embed/base.py",
+            "rerank/base.py"
+          ],
+          "expanded_terms": [
+            "ABC",
+            "abstractmethod",
+            "BaseEmbedder",
+            "BaseReranker",
+            "BaseANNIndex",
+            "BaseBinaryIndex",
+            "ChangeType",
+            "BinaryStore",
+            "MetadataStore",
+            "APIEmbedder"
+          ],
+          "recall": 0.3333333333333333,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.4693,
+          "found": [
+            "core/base.py",
+            "embed/api.py",
+            "core/factory.py",
+            "rerank/local.py",
+            "core/binary.py",
+            "core/shard.py",
+            "core/faiss_index.py"
+          ]
+        },
+        {
+          "id": "CQ3",
+          "category": "cross-module",
+          "difficulty": "medium",
+          "expected": [
+            "core/shard_manager.py",
+            "core/shard.py"
+          ],
+          "expanded_terms": [
+            "ShardManager",
+            "max_loaded_shards",
+            "_evict_lru",
+            "_search_shard",
+            "shard_manager",
+            "_default_fastembed_cache",
+            "_search_fast"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "core/shard_manager.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ4",
+          "category": "behavioral",
+          "difficulty": "hard",
+          "expected": [
+            "embed/local.py",
+            "embed/api.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_smart_chunk",
+            "_vector_search"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "bridge.py",
+            "embed/local.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ5",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "watcher/file_watcher.py",
+            "watcher/events.py"
+          ],
+          "expanded_terms": [
+            "FileWatcher",
+            "FileEvent",
+            "debounce",
+            "events",
+            "IncrementalIndexer",
+            "file_needs_update",
+            "metadata",
+            "sync",
+            "file_needs_update_fast",
+            "file_watcher"
+          ],
+          "recall": 0.5,
+          "mrr": 0.5,
+          "top3_hit": true,
+          "ndcg5": 0.3869,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ6",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "is_file_excluded",
+            "_extract_file_symbols",
+            "_extract_file_refs",
+            "_chunk_code",
+            "BinaryStore"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "config.py"
+          ]
+        },
+        {
+          "id": "CQ7",
+          "category": "behavioral",
+          "difficulty": "medium",
+          "expected": [
+            "parsers/chunker.py",
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "_chunk_code",
+            "chunk_by_ast",
+            "_smart_chunk",
+            "_should_extract_symbols",
+            "_extract_java_refs"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "parsers/chunker.py"
+          ]
+        },
+        {
+          "id": "CQ8",
+          "category": "negative",
+          "difficulty": "hard",
+          "expected": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "_vector_search",
+            "_has_vector_index",
+            "coarse_search",
+            "indexing",
+            "_binary_coarse_search"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/pipeline.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ9",
+          "category": "negative",
+          "difficulty": "medium",
+          "expected": [
+            "embed/api.py",
+            "rerank/api.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "FastEmbedReranker",
+            "TextCrossEncoder",
+            "score_pairs",
+            "_call_api_with_retry",
+            "resolve_embed_providers",
+            "APIEmbedder",
+            "resolve_refs",
+            "_resolve_ref_chunk"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "rerank/api.py"
+          ]
+        },
+        {
+          "id": "CQ10",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "search/fusion.py"
+          ],
+          "expanded_terms": [
+            "reciprocal_rank_fusion",
+            "get_adaptive_weights",
+            "detect_query_intent",
+            "_semantic_search",
+            "indexing",
+            "_binary_coarse_search",
+            "search_code"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/fusion.py",
+            "search/pipeline.py",
+            "search/__init__.py"
+          ]
+        },
+        {
+          "id": "CQ11",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "_chunk_code",
+            "_inject_context_headers",
+            "chunk_by_ast",
+            "get_chunk_ids_by_path",
+            "register_chunks"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py",
+            "embed/api.py"
+          ]
+        },
+        {
+          "id": "CQ12",
+          "category": "impl-detail",
+          "difficulty": "hard",
+          "expected": [
+            "parsers/references.py",
+            "search/graph.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_semantic_search",
+            "_traverse",
+            "_extract_go_refs",
+            "_extract_python_refs"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "search/graph.py",
+            "parsers/references.py",
+            "mcp_server.py"
+          ]
+        },
+        {
+          "id": "CQ13",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "model_manager.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "_ensure_model_onnx",
+            "_dir_has_onnx",
+            "_default_fastembed_cache",
+            "_find_model_cache_path",
+            "_apply_mirror"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "model_manager.py",
+            "config.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ14",
+          "category": "impl-detail",
+          "difficulty": "medium",
+          "expected": [
+            "core/binary.py"
+          ],
+          "expanded_terms": [
+            "_quantize",
+            "coarse_search",
+            "BinaryStore",
+            "_binary_coarse_search",
+            "_vector_search",
+            "_quantize_single",
+            "FastEmbedEmbedder"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "core/binary.py",
+            "core/faiss_index.py",
+            "core/base.py",
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ15",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "config.py",
+            "bridge.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "_uses_gpu",
+            "_ensure_model_onnx",
+            "ensure_model"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.9197,
+          "found": [
+            "config.py",
+            "embed/local.py",
+            "bridge.py",
+            "model_manager.py"
+          ]
+        },
+        {
+          "id": "CQ16",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "mcp_server.py"
+          ],
+          "expanded_terms": [
+            "mcp_server",
+            "index_project",
+            "create_pipeline",
+            "_search_fast",
+            "_create_pipeline"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "mcp_server.py",
+            "bridge.py"
+          ]
+        },
+        {
+          "id": "CQ17",
+          "category": "integration",
+          "difficulty": "medium",
+          "expected": [
+            "indexing/pipeline.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "_embed_worker",
+            "_smart_chunk",
+            "_chunk_code",
+            "search_from_chunks",
+            "chunker"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "indexing/pipeline.py"
+          ]
+        },
+        {
+          "id": "CQ18",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "search/graph.py",
+            "search/pipeline.py"
+          ],
+          "expanded_terms": [
+            "GraphSearcher",
+            "_traverse",
+            "search_from_chunks",
+            "_find_seed_symbols",
+            "_binary_coarse_search",
+            "search_code",
+            "_semantic_search"
+          ],
+          "recall": 0.5,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.6131,
+          "found": [
+            "search/graph.py"
+          ]
+        },
+        {
+          "id": "CQ19",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "indexing/pipeline.py",
+            "indexing/metadata.py",
+            "watcher/incremental_indexer.py"
+          ],
+          "expanded_terms": [
+            "IncrementalIndexer",
+            "file_needs_update",
+            "FileWatcher",
+            "file_needs_update_fast",
+            "incremental_indexer"
+          ],
+          "recall": 0.6666666666666666,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 0.7654,
+          "found": [
+            "watcher/incremental_indexer.py",
+            "indexing/metadata.py",
+            "watcher/file_watcher.py"
+          ]
+        },
+        {
+          "id": "CQ20",
+          "category": "integration",
+          "difficulty": "hard",
+          "expected": [
+            "embed/api.py",
+            "config.py"
+          ],
+          "expanded_terms": [
+            "FastEmbedEmbedder",
+            "embed_single",
+            "embed_batch",
+            "TextEmbedding",
+            "APIEmbedder",
+            "resolve_embed_providers",
+            "APIReranker",
+            "FastEmbedReranker"
+          ],
+          "recall": 1.0,
+          "mrr": 1.0,
+          "top3_hit": true,
+          "ndcg5": 1.0,
+          "found": [
+            "embed/api.py",
+            "config.py"
+          ]
+        }
+      ]
+    }
+  }
+}

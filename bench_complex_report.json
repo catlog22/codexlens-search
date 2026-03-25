@@ -1,0 +1,622 @@
+{
+  "benchmark": "complex-20-queries",
+  "summary": {
+    "ace": {
+      "avg_recall": 1.0,
+      "avg_mrr": 0.9167,
+      "avg_ndcg5": 0.9363,
+      "top3_rate": 1.0,
+      "zero_recall": 0
+    },
+    "codexlens": {
+      "avg_recall": 0.8333,
+      "avg_mrr": 0.9,
+      "avg_ndcg5": 0.8236,
+      "top3_rate": 0.95,
+      "zero_recall": 1
+    },
+    "query_wins": {
+      "ace": 7,
+      "codexlens": 1,
+      "tie": 12
+    }
+  },
+  "queries": [
+    {
+      "id": "CQ1",
+      "category": "cross-module",
+      "difficulty": "hard",
+      "query": "how does a natural language query flow from user input throu",
+      "expected": [
+        "search/pipeline.py",
+        "search/fusion.py",
+        "core/binary.py",
+        "core/index.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.5,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 0.8048,
+      "cl_ndcg5": 0.6367,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "search/pipeline.py",
+        "search/fusion.py",
+        "bridge.py",
+        "core/binary.py",
+        "core/faiss_index.py"
+      ],
+      "cl_found": [
+        "search/pipeline.py",
+        "search/fusion.py",
+        "mcp_server.py"
+      ]
+    },
+    {
+      "id": "CQ2",
+      "category": "cross-module",
+      "difficulty": "hard",
+      "query": "abstract base classes and interface contracts that define th",
+      "expected": [
+        "core/base.py",
+        "embed/base.py",
+        "rerank/base.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.0,
+      "ace_mrr": 0.5,
+      "cl_mrr": 0.0,
+      "ace_ndcg5": 0.7328,
+      "cl_ndcg5": 0.0,
+      "ace_top3": true,
+      "cl_top3": false,
+      "ace_found": [
+        "core/shard.py",
+        "core/base.py",
+        "rerank/base.py",
+        "embed/base.py",
+        "bridge.py"
+      ],
+      "cl_found": [
+        "embed/api.py",
+        "core/faiss_index.py",
+        "embed/local.py",
+        "rerank/local.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ3",
+      "category": "cross-module",
+      "difficulty": "medium",
+      "query": "LRU eviction policy for shard lifecycle management when memo",
+      "expected": [
+        "core/shard_manager.py",
+        "core/shard.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.5,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 0.6131,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "core/shard_manager.py",
+        "core/shard.py",
+        "config.py",
+        "search/pipeline.py",
+        "search/fusion.py"
+      ],
+      "cl_found": [
+        "core/shard_manager.py"
+      ]
+    },
+    {
+      "id": "CQ4",
+      "category": "behavioral",
+      "difficulty": "hard",
+      "query": "how the system decides whether to use local ONNX inference o",
+      "expected": [
+        "embed/local.py",
+        "embed/api.py",
+        "bridge.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.6666666666666666,
+      "ace_mrr": 0.3333333333333333,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 0.6183,
+      "cl_ndcg5": 0.7654,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "config.py",
+        "core/factory.py",
+        "bridge.py",
+        "embed/local.py",
+        "embed/api.py"
+      ],
+      "cl_found": [
+        "embed/api.py",
+        "bridge.py",
+        "rerank/api.py",
+        "config.py",
+        "indexing/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ5",
+      "category": "behavioral",
+      "difficulty": "medium",
+      "query": "debouncing rapid filesystem notifications before triggering ",
+      "expected": [
+        "watcher/file_watcher.py",
+        "watcher/events.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.5,
+      "ace_mrr": 0.5,
+      "cl_mrr": 0.5,
+      "ace_ndcg5": 0.6934,
+      "cl_ndcg5": 0.3869,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "watcher/incremental_indexer.py",
+        "watcher/file_watcher.py",
+        "watcher/events.py",
+        "mcp_server.py",
+        "indexing/pipeline.py"
+      ],
+      "cl_found": [
+        "watcher/incremental_indexer.py",
+        "watcher/file_watcher.py"
+      ]
+    },
+    {
+      "id": "CQ6",
+      "category": "behavioral",
+      "difficulty": "medium",
+      "query": "detecting whether a file contains machine-generated code or ",
+      "expected": [
+        "indexing/pipeline.py",
+        "config.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "indexing/pipeline.py",
+        "config.py",
+        "core/binary.py",
+        "core/factory.py"
+      ],
+      "cl_found": [
+        "indexing/pipeline.py",
+        "config.py",
+        "search/fusion.py"
+      ]
+    },
+    {
+      "id": "CQ7",
+      "category": "behavioral",
+      "difficulty": "medium",
+      "query": "splitting source code at meaningful boundaries like function",
+      "expected": [
+        "parsers/chunker.py",
+        "indexing/pipeline.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "parsers/chunker.py",
+        "indexing/pipeline.py",
+        "parsers/symbols.py",
+        "parsers/parser.py",
+        "config.py"
+      ],
+      "cl_found": [
+        "indexing/pipeline.py",
+        "parsers/chunker.py",
+        "parsers/symbols.py",
+        "parsers/references.py"
+      ]
+    },
+    {
+      "id": "CQ8",
+      "category": "negative",
+      "difficulty": "hard",
+      "query": "graceful fallback when the vector index is empty or missing ",
+      "expected": [
+        "search/pipeline.py",
+        "mcp_server.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "search/pipeline.py",
+        "mcp_server.py",
+        "core/factory.py",
+        "bridge.py",
+        "indexing/pipeline.py"
+      ],
+      "cl_found": [
+        "search/pipeline.py",
+        "mcp_server.py",
+        "indexing/pipeline.py",
+        "core/faiss_index.py"
+      ]
+    },
+    {
+      "id": "CQ9",
+      "category": "negative",
+      "difficulty": "medium",
+      "query": "retry logic and error recovery when external API calls for e",
+      "expected": [
+        "embed/api.py",
+        "rerank/api.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "embed/api.py",
+        "rerank/api.py",
+        "bridge.py",
+        "config.py"
+      ],
+      "cl_found": [
+        "embed/api.py",
+        "rerank/api.py"
+      ]
+    },
+    {
+      "id": "CQ10",
+      "category": "impl-detail",
+      "difficulty": "hard",
+      "query": "adaptive weight adjustment for fusion based on whether the q",
+      "expected": [
+        "search/fusion.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "search/fusion.py",
+        "search/pipeline.py",
+        "config.py",
+        "mcp_server.py",
+        "core/shard_manager.py"
+      ],
+      "cl_found": [
+        "search/fusion.py",
+        "search/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ11",
+      "category": "impl-detail",
+      "difficulty": "medium",
+      "query": "prepending file path and enclosing class or function name as",
+      "expected": [
+        "indexing/pipeline.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "indexing/pipeline.py",
+        "parsers/chunker.py",
+        "parsers/symbols.py",
+        "parsers/parser.py",
+        "embed/api.py"
+      ],
+      "cl_found": [
+        "indexing/pipeline.py",
+        "config.py"
+      ]
+    },
+    {
+      "id": "CQ12",
+      "category": "impl-detail",
+      "difficulty": "hard",
+      "query": "mapping Python import statements and function calls to direc",
+      "expected": [
+        "parsers/references.py",
+        "search/graph.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 0.8772,
+      "cl_ndcg5": 0.9197,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "parsers/references.py",
+        "parsers/symbols.py",
+        "indexing/pipeline.py",
+        "search/graph.py",
+        "search/fts.py"
+      ],
+      "cl_found": [
+        "search/graph.py",
+        "mcp_server.py",
+        "parsers/references.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ13",
+      "category": "impl-detail",
+      "difficulty": "medium",
+      "query": "HuggingFace mirror configuration and ONNX model cache valida",
+      "expected": [
+        "model_manager.py",
+        "config.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "model_manager.py",
+        "config.py",
+        "bridge.py",
+        "README.md"
+      ],
+      "cl_found": [
+        "model_manager.py",
+        "config.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ14",
+      "category": "impl-detail",
+      "difficulty": "medium",
+      "query": "converting high-dimensional float32 vectors to compact binar",
+      "expected": [
+        "core/binary.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 0.5,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 0.6309,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "core/binary.py",
+        "core/faiss_index.py",
+        "core/base.py",
+        "search/pipeline.py",
+        "config.py"
+      ],
+      "cl_found": [
+        "core/faiss_index.py",
+        "core/binary.py",
+        "core/base.py",
+        "indexing/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ15",
+      "category": "integration",
+      "difficulty": "hard",
+      "query": "environment variable and dataclass configuration cascade tha",
+      "expected": [
+        "config.py",
+        "bridge.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "config.py",
+        "bridge.py",
+        "embed/local.py",
+        "core/factory.py",
+        "mcp_server.py"
+      ],
+      "cl_found": [
+        "config.py",
+        "bridge.py",
+        "embed/local.py"
+      ]
+    },
+    {
+      "id": "CQ16",
+      "category": "integration",
+      "difficulty": "medium",
+      "query": "how the MCP server lazily creates search pipelines per proje",
+      "expected": [
+        "mcp_server.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "mcp_server.py",
+        "indexing/pipeline.py",
+        "bridge.py",
+        "search/pipeline.py"
+      ],
+      "cl_found": [
+        "mcp_server.py",
+        "bridge.py"
+      ]
+    },
+    {
+      "id": "CQ17",
+      "category": "integration",
+      "difficulty": "medium",
+      "query": "parallel worker pool that simultaneously chunks files, extra",
+      "expected": [
+        "indexing/pipeline.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "indexing/pipeline.py",
+        "embed/api.py",
+        "search/pipeline.py",
+        "parsers/symbols.py"
+      ],
+      "cl_found": [
+        "indexing/pipeline.py",
+        "search/pipeline.py",
+        "embed/api.py",
+        "core/shard_manager.py"
+      ]
+    },
+    {
+      "id": "CQ18",
+      "category": "integration",
+      "difficulty": "hard",
+      "query": "seed symbol discovery from initial search results followed b",
+      "expected": [
+        "search/graph.py",
+        "search/pipeline.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 0.5,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 0.6131,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "search/graph.py",
+        "search/pipeline.py",
+        "mcp_server.py",
+        "search/fts.py",
+        "search/fusion.py"
+      ],
+      "cl_found": [
+        "search/graph.py"
+      ]
+    },
+    {
+      "id": "CQ19",
+      "category": "integration",
+      "difficulty": "hard",
+      "query": "incremental sync that detects added modified and deleted fil",
+      "expected": [
+        "indexing/pipeline.py",
+        "indexing/metadata.py",
+        "watcher/incremental_indexer.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 0.906,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "watcher/incremental_indexer.py",
+        "indexing/pipeline.py",
+        "indexing/metadata.py",
+        "bridge.py",
+        "mcp_server.py"
+      ],
+      "cl_found": [
+        "watcher/incremental_indexer.py",
+        "mcp_server.py",
+        "indexing/metadata.py",
+        "indexing/pipeline.py"
+      ]
+    },
+    {
+      "id": "CQ20",
+      "category": "integration",
+      "difficulty": "hard",
+      "query": "multi-endpoint round-robin load balancing for distributing e",
+      "expected": [
+        "embed/api.py",
+        "config.py"
+      ],
+      "ace_recall": 1.0,
+      "cl_recall": 1.0,
+      "ace_mrr": 1.0,
+      "cl_mrr": 1.0,
+      "ace_ndcg5": 1.0,
+      "cl_ndcg5": 1.0,
+      "ace_top3": true,
+      "cl_top3": true,
+      "ace_found": [
+        "embed/api.py",
+        "config.py",
+        "rerank/api.py",
+        "bridge.py",
+        "core/shard_manager.py"
+      ],
+      "cl_found": [
+        "embed/api.py",
+        "config.py",
+        "bridge.py"
+      ]
+    }
+  ]
+}

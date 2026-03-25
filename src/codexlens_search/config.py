@@ -106,11 +106,32 @@ class Config:
     # Fusion
     fusion_k: int = 60  # RRF k parameter
     fusion_weights: dict = field(default_factory=lambda: {
-        "exact": 0.25,
-        "fuzzy": 0.10,
-        "vector": 0.50,
-        "graph": 0.15,
+        "exact": 0.17,
+        "fuzzy": 0.085,
+        "vector": 0.34,
+        "graph": 0.085,
+        "symbol": 0.17,
+        "entity": 0.15,
     })
+
+    # Graph search weights (symbol reference graph scoring)
+    graph_kind_weights: dict[str, float] | None = None
+    graph_dir_weights: dict[str, float] | None = None
+
+    # Symbol-level search boost (exact symbol name lookup)
+    symbol_search_enabled: bool = True
+
+    # Entity dependency graph expansion
+    entity_graph_enabled: bool = True
+    entity_graph_depth: int = 2
+    entity_graph_backend: str = "auto"
+
+    # LLM Agent loop (optional)
+    agent_enabled: bool = False
+    agent_llm_model: str = "glm-5-turbo"
+    agent_llm_api_key: str = ""
+    agent_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4/"
+    agent_max_iterations: int = 5
 
     _DEFAULT_EXCLUDE_EXTENSIONS: frozenset[str] = frozenset({
         # binaries / images
@@ -134,6 +155,54 @@ class Config:
             object.__setattr__(self, "exclude_extensions", self._DEFAULT_EXCLUDE_EXTENSIONS)
         if self.embed_api_endpoints is None:
             object.__setattr__(self, "embed_api_endpoints", [])
+        # Ensure fusion weights include new sources (backward compatible)
+        if self.fusion_weights is None:
+            object.__setattr__(self, "fusion_weights", {})
+        default_fusion = {
+            "exact": 0.17,
+            "fuzzy": 0.085,
+            "vector": 0.34,
+            "graph": 0.085,
+            "symbol": 0.17,
+            "entity": 0.15,
+        }
+        merged_fusion = dict(default_fusion)
+        merged_fusion.update(self.fusion_weights)
+        object.__setattr__(self, "fusion_weights", merged_fusion)
+
+        # Entity graph config normalization
+        try:
+            object.__setattr__(self, "entity_graph_depth", max(0, int(self.entity_graph_depth)))
+        except Exception:
+            object.__setattr__(self, "entity_graph_depth", 2)
+
+        # Agent loop config normalization
+        try:
+            object.__setattr__(self, "agent_max_iterations", max(1, int(self.agent_max_iterations)))
+        except Exception:
+            object.__setattr__(self, "agent_max_iterations", 5)
+
+        # Graph weights: allow partial overrides, fill missing keys
+        default_kind = {
+            "import": 1.0,
+            "call": 1.5,
+            "inherit": 0.9,
+            "type_ref": 0.3,
+        }
+        merged_kind = dict(default_kind)
+        if self.graph_kind_weights:
+            merged_kind.update(self.graph_kind_weights)
+        object.__setattr__(self, "graph_kind_weights", merged_kind)
+
+        default_dir = {
+            "backward": 1.3,
+            "forward": 0.6,
+        }
+        merged_dir = dict(default_dir)
+        if self.graph_dir_weights:
+            merged_dir.update(self.graph_dir_weights)
+        object.__setattr__(self, "graph_dir_weights", merged_dir)
+
         # GPU ONNX sessions are not thread-safe — clamp to 1 embed worker
         # and increase batch size to leverage GPU-internal parallelism
         if self._uses_gpu():

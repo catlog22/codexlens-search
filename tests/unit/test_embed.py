@@ -62,7 +62,7 @@ class TestEmbedBatch(unittest.TestCase):
 
 class TestEmbedProfiles(unittest.TestCase):
     def test_embed_profiles_all_have_valid_keys(self):
-        expected_keys = {"small", "base", "large", "code"}
+        expected_keys = {"small", "base", "large", "code", "code-light", "long"}
         self.assertEqual(set(EMBED_PROFILES.keys()), expected_keys)
 
     def test_embed_profiles_model_ids_non_empty(self):

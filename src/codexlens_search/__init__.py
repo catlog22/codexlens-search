@@ -8,11 +8,15 @@ Public API for consumers (e.g. codex-lens):
     from codexlens_search.rerank.api import APIReranker
 """
 from codexlens_search.config import Config
+from codexlens_search.core.entity import EntityId
+from codexlens_search.core.entity_graph import EntityGraph
 from codexlens_search.indexing import IndexingPipeline, IndexStats
 from codexlens_search.search.pipeline import SearchPipeline, SearchResult
 
 __all__ = [
     "Config",
+    "EntityGraph",
+    "EntityId",
     "IndexingPipeline",
     "IndexStats",
     "SearchPipeline",

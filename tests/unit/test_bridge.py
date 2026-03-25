@@ -31,13 +31,19 @@ class TestParser:
 
     def test_all_subcommands_exist(self):
         expected = {
-            "init", "search", "index-file", "remove-file",
-            "sync", "watch", "download-models", "status",
+            "init", "search", "search-files", "locate", "index-file", "remove-file",
+            "sync", "watch", "download-models", "traverse", "status",
         }
         # parse each subcommand with minimal required args to verify it exists
         for cmd in expected:
             if cmd == "search":
                 args = self.parser.parse_args(["search", "--query", "test"])
+            elif cmd == "search-files":
+                args = self.parser.parse_args(["search-files", "--query", "test"])
+            elif cmd == "locate":
+                args = self.parser.parse_args(["locate", "--query", "test"])
+            elif cmd == "traverse":
+                args = self.parser.parse_args(["traverse", "MySymbol"])
             elif cmd == "index-file":
                 args = self.parser.parse_args(["index-file", "--file", "x.py"])
             elif cmd == "remove-file":
@@ -235,6 +241,19 @@ class TestCreateConfigFromEnv:
             assert config.fts_top_k == 30
             assert config.fusion_k == 60
 
+    def test_agent_env_vars(self, tmp_path):
+        from codexlens_search.bridge import create_config_from_env
+        env = {
+            "CODEXLENS_AGENT_LLM_MODEL": "gpt-4o-mini",
+            "CODEXLENS_AGENT_LLM_API_KEY": "test-key",
+            "CODEXLENS_AGENT_MAX_ITERATIONS": "7",
+        }
+        with patch.dict(os.environ, env):
+            config = create_config_from_env(tmp_path)
+            assert config.agent_llm_model == "gpt-4o-mini"
+            assert config.agent_llm_api_key == "test-key"
+            assert config.agent_max_iterations == 7
+
 
 # ---------------------------------------------------------------------------
 # cmd_search (with mocked pipeline)
@@ -273,6 +292,95 @@ class TestCmdSearch:
         assert len(out) == 1
         assert out[0]["path"] == "src/main.py"
         assert out[0]["score"] == 0.95
+
+
+class TestCmdSearchFiles:
+    def test_search_files_outputs_json(self, tmp_path, capsys):
+        from codexlens_search.bridge import cmd_search_files
+
+        mock_result = MagicMock()
+        mock_result.path = "src/main.py"
+        mock_result.score = 0.95
+        mock_result.best_chunk_id = 42
+        mock_result.line = 10
+        mock_result.end_line = 20
+        mock_result.snippet = "def main():"
+        mock_result.content = "def main():\n    pass"
+        mock_result.chunk_ids = (1, 42)
+
+        mock_search = MagicMock()
+        mock_search.search_files.return_value = [mock_result]
+
+        with patch("codexlens_search.bridge._create_pipeline") as mock_cp:
+            mock_cp.return_value = (MagicMock(), mock_search, MagicMock())
+            args = argparse.Namespace(
+                db_path=str(tmp_path),
+                verbose=False,
+                query="main",
+                top_k=10,
+                embed_api_url="",
+                embed_api_key="",
+                embed_api_model="",
+                embed_model=None,
+            )
+            cmd_search_files(args)
+
+        out = json.loads(capsys.readouterr().out.strip())
+        assert len(out) == 1
+        assert out[0]["path"] == "src/main.py"
+        assert out[0]["best_chunk_id"] == 42
+
+
+# ---------------------------------------------------------------------------
+# cmd_locate (with mocked agent)
+# ---------------------------------------------------------------------------
+
+class TestCmdLocate:
+    def test_locate_outputs_json(self, tmp_path, capsys):
+        from codexlens_search.bridge import cmd_locate
+
+        mock_result = MagicMock()
+        mock_result.path = "src/main.py"
+        mock_result.score = 0.95
+        mock_result.best_chunk_id = 42
+        mock_result.line = 10
+        mock_result.end_line = 20
+        mock_result.snippet = "def main():"
+        mock_result.content = "def main():\n    pass"
+        mock_result.chunk_ids = (1, 42)
+
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = [mock_result]
+
+        mock_search = MagicMock()
+        mock_search._entity_graph = MagicMock()
+
+        mock_config = MagicMock()
+        mock_config.agent_max_iterations = 5
+
+        with patch("codexlens_search.bridge._create_pipeline") as mock_cp, patch(
+            "codexlens_search.bridge.create_agent"
+        ) as mock_ca:
+            mock_cp.return_value = (MagicMock(), mock_search, mock_config)
+            mock_ca.return_value = mock_agent
+
+            args = argparse.Namespace(
+                db_path=str(tmp_path),
+                verbose=False,
+                query="main",
+                top_k=10,
+                max_iterations=None,
+                embed_api_url="",
+                embed_api_key="",
+                embed_api_model="",
+                embed_model=None,
+            )
+            cmd_locate(args)
+
+        out = json.loads(capsys.readouterr().out.strip())
+        assert len(out) == 1
+        assert out[0]["path"] == "src/main.py"
+        assert out[0]["best_chunk_id"] == 42
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -8,12 +9,14 @@ import numpy as np
 
 from ..config import Config
 from ..core.base import BaseANNIndex, BaseBinaryIndex
+from ..core.entity_graph import EntityGraph
 from ..embed import BaseEmbedder
 from ..indexing.metadata import MetadataStore
 from ..rerank import BaseReranker
 from .fts import FTSEngine
 from .fusion import (
     DEFAULT_WEIGHTS,
+    QueryIntent,
     detect_query_intent,
     get_adaptive_weights,
     reciprocal_rank_fusion,
@@ -24,6 +27,15 @@ from .graph import GraphSearcher
 _log = logging.getLogger(__name__)
 
 _VALID_QUALITIES = ("fast", "balanced", "thorough", "auto")
+
+_SYMBOL_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SYMBOL_STOPWORDS = frozenset({
+    # Python keywords / common code tokens
+    "and", "as", "assert", "async", "await", "break", "case", "class", "continue",
+    "def", "del", "elif", "else", "except", "false", "finally", "for", "from",
+    "global", "if", "import", "in", "is", "lambda", "match", "none", "nonlocal",
+    "not", "or", "pass", "raise", "return", "true", "try", "while", "with", "yield",
+})
 
 
 @dataclass
@@ -38,6 +50,19 @@ class SearchResult:
     language: str = ""
 
 
+@dataclass
+class FileSearchResult:
+    path: str
+    score: float
+    best_chunk_id: int
+    snippet: str = ""
+    line: int = 0
+    end_line: int = 0
+    content: str = ""
+    language: str = ""
+    chunk_ids: tuple[int, ...] = ()
+
+
 class SearchPipeline:
     def __init__(
         self,
@@ -49,6 +74,7 @@ class SearchPipeline:
         config: Config,
         metadata_store: MetadataStore | None = None,
         graph_searcher: GraphSearcher | None = None,
+        entity_graph: EntityGraph | None = None,
         query_expander: QueryExpander | None = None,
     ) -> None:
         self._embedder = embedder
@@ -59,6 +85,7 @@ class SearchPipeline:
         self._config = config
         self._metadata_store = metadata_store
         self._graph_searcher = graph_searcher
+        self._entity_graph = entity_graph
         self._query_expander = query_expander
 
     def close(self) -> None:
@@ -141,6 +168,56 @@ class SearchPipeline:
         fuzzy_results = self._fts.fuzzy_search(query, top_k=cfg.fts_top_k)
         return exact_results, fuzzy_results
 
+    @staticmethod
+    def _extract_symbol_candidates(query: str, max_candidates: int = 12) -> list[str]:
+        """Extract likely code identifiers from query for symbol name lookup."""
+        cleaned = query.replace("`", " ")
+        tokens = _SYMBOL_TOKEN_RE.findall(cleaned)
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for tok in tokens:
+            if len(tok) < 2:
+                continue
+
+            lower = tok.lower()
+            if lower in _SYMBOL_STOPWORDS:
+                continue
+
+            # Prefer code-looking identifiers, but allow long lowercase names.
+            is_codeish = any(c.isupper() for c in tok) or "_" in tok or tok.startswith("_")
+            if not is_codeish and len(tok) < 4:
+                continue
+
+            if lower in seen:
+                continue
+            seen.add(lower)
+            candidates.append(tok)
+            if len(candidates) >= max_candidates:
+                break
+        return candidates
+
+    def _symbol_search(self, query: str, top_k: int | None = None) -> list[tuple[int, float]]:
+        """Exact symbol-name lookup → chunk scoring (for CODE_SYMBOL intent boost)."""
+        candidates = self._extract_symbol_candidates(query)
+        if not candidates:
+            return []
+
+        chunk_scores: dict[int, float] = {}
+        for cand in candidates:
+            for sym in self._fts.get_symbols_by_name(cand):
+                cid = sym.get("chunk_id")
+                if cid is None:
+                    continue
+                chunk_scores[int(cid)] = chunk_scores.get(int(cid), 0.0) + 1.0
+
+        if not chunk_scores:
+            return []
+
+        limit = top_k if top_k is not None else self._config.fts_top_k
+        ranked = sorted(chunk_scores.items(), key=lambda x: x[1], reverse=True)
+        return ranked[:limit]
+
     # -- Helper: filter deleted IDs ---------------------------------------
 
     def _filter_deleted(
@@ -172,11 +249,16 @@ class SearchPipeline:
 
         if use_reranker:
             rerank_ids = [doc_id for doc_id, _ in fused[:50]]
+            fused_scores = {doc_id: score for doc_id, score in fused}
             contents = [self._fts.get_content(doc_id) for doc_id in rerank_ids]
             rerank_scores = self._reranker.score_pairs(query, contents)
-            ranked = sorted(
-                zip(rerank_ids, rerank_scores), key=lambda x: x[1], reverse=True
-            )
+            # Blend: 70% reranker + 30% normalized fusion to preserve structural signal.
+            max_fused = max((fused_scores.get(d, 0.0) for d in rerank_ids), default=1.0) or 1.0
+            blended = []
+            for doc_id, rr_score in zip(rerank_ids, rerank_scores):
+                norm_fused = fused_scores.get(doc_id, 0.0) / max_fused
+                blended.append((doc_id, 0.7 * rr_score + 0.3 * norm_fused))
+            ranked = sorted(blended, key=lambda x: x[1], reverse=True)
         else:
             ranked = fused
 
@@ -250,14 +332,15 @@ class SearchPipeline:
         return self._rerank_and_build(query, fused, final_top_k, use_reranker=True)
 
     def _search_balanced(
-        self, query: str, final_top_k: int
+        self, query: str, final_top_k: int, *, intent: QueryIntent | None = None
     ) -> list[SearchResult]:
         """FTS + binary coarse search with RRF fusion and reranking.
 
         Embeds the query for binary coarse search but skips ANN fine search.
         """
-        intent = detect_query_intent(query)
-        weights = get_adaptive_weights(intent, self._config.fusion_weights)
+        cfg = self._config
+        intent = intent or detect_query_intent(query)
+        weights = get_adaptive_weights(intent, cfg.fusion_weights)
 
         query_vec = self._embedder.embed_single(query)
 
@@ -265,6 +348,7 @@ class SearchPipeline:
         coarse_results: list[tuple[int, float]] = []
         exact_results: list[tuple[int, float]] = []
         fuzzy_results: list[tuple[int, float]] = []
+        symbol_results: list[tuple[int, float]] = []
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             coarse_future = pool.submit(self._binary_coarse_search, query_vec)
@@ -280,6 +364,12 @@ class SearchPipeline:
             except Exception:
                 _log.warning("FTS search failed", exc_info=True)
 
+        if cfg.symbol_search_enabled and intent == QueryIntent.CODE_SYMBOL:
+            try:
+                symbol_results = self._symbol_search(query)
+            except Exception:
+                _log.warning("Symbol search failed", exc_info=True)
+
         fusion_input: dict[str, list[tuple[int, float]]] = {}
         if coarse_results:
             fusion_input["vector"] = coarse_results
@@ -287,6 +377,8 @@ class SearchPipeline:
             fusion_input["exact"] = exact_results
         if fuzzy_results:
             fusion_input["fuzzy"] = fuzzy_results
+        if symbol_results:
+            fusion_input["symbol"] = symbol_results
 
         # Graph search: seed from top vector/FTS chunks
         if self._graph_searcher is not None:
@@ -299,20 +391,48 @@ class SearchPipeline:
             except Exception:
                 _log.warning("Graph search failed", exc_info=True)
 
+        # Entity graph expansion: expand from top chunks via entity dependencies
+        if self._entity_graph is not None and cfg.entity_graph_enabled:
+            try:
+                seed_ids = self._collect_top_chunk_ids(fusion_input)
+                if seed_ids:
+                    entity_results = self._entity_graph.expand_from_chunks(
+                        seed_ids,
+                        depth=cfg.entity_graph_depth,
+                        top_k=cfg.fts_top_k,
+                    )
+                    if entity_results:
+                        fusion_input["entity"] = entity_results
+            except Exception:
+                _log.warning("Entity graph expansion failed", exc_info=True)
+
         if not fusion_input:
             return []
 
-        fused = reciprocal_rank_fusion(fusion_input, weights=weights, k=self._config.fusion_k)
+        fused = reciprocal_rank_fusion(fusion_input, weights=weights, k=cfg.fusion_k)
         fused = self._filter_deleted(fused)
+
+        # Ensure top graph/entity results reach the reranker pool.
+        graph_top_ids: set[int] = set()
+        for src in ("graph", "entity"):
+            for doc_id, _ in fusion_input.get(src, [])[:10]:
+                graph_top_ids.add(doc_id)
+        if graph_top_ids:
+            fused_ids = {doc_id for doc_id, _ in fused[:50]}
+            missing = [doc_id for doc_id in graph_top_ids if doc_id not in fused_ids]
+            if missing:
+                median_score = fused[len(fused) // 2][1] if fused else 0.0
+                fused = fused[:50] + [(doc_id, median_score) for doc_id in missing]
+
         return self._rerank_and_build(query, fused, final_top_k, use_reranker=True)
 
     def _search_thorough(
-        self, query: str, final_top_k: int
+        self, query: str, final_top_k: int, *, intent: QueryIntent | None = None
     ) -> list[SearchResult]:
         """Full 2-stage vector + FTS + reranking pipeline (original behavior)."""
         cfg = self._config
 
-        intent = detect_query_intent(query)
+        intent = intent or detect_query_intent(query)
         weights = get_adaptive_weights(intent, cfg.fusion_weights)
 
         query_vec = self._embedder.embed_single(query)
@@ -321,6 +441,7 @@ class SearchPipeline:
         vector_results: list[tuple[int, float]] = []
         exact_results: list[tuple[int, float]] = []
         fuzzy_results: list[tuple[int, float]] = []
+        symbol_results: list[tuple[int, float]] = []
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             vec_future = pool.submit(self._vector_search, query_vec)
@@ -336,6 +457,12 @@ class SearchPipeline:
             except Exception:
                 _log.warning("FTS search failed, using empty results", exc_info=True)
 
+        if cfg.symbol_search_enabled and intent == QueryIntent.CODE_SYMBOL:
+            try:
+                symbol_results = self._symbol_search(query)
+            except Exception:
+                _log.warning("Symbol search failed", exc_info=True)
+
         fusion_input: dict[str, list[tuple[int, float]]] = {}
         if vector_results:
             fusion_input["vector"] = vector_results
@@ -343,6 +470,8 @@ class SearchPipeline:
             fusion_input["exact"] = exact_results
         if fuzzy_results:
             fusion_input["fuzzy"] = fuzzy_results
+        if symbol_results:
+            fusion_input["symbol"] = symbol_results
 
         # Graph search: seed from top vector/FTS chunks
         if self._graph_searcher is not None:
@@ -355,11 +484,42 @@ class SearchPipeline:
             except Exception:
                 _log.warning("Graph search failed", exc_info=True)
 
+        # Entity graph expansion: expand from top chunks via entity dependencies
+        if self._entity_graph is not None and cfg.entity_graph_enabled:
+            try:
+                seed_ids = self._collect_top_chunk_ids(fusion_input)
+                if seed_ids:
+                    entity_results = self._entity_graph.expand_from_chunks(
+                        seed_ids,
+                        depth=cfg.entity_graph_depth,
+                        top_k=cfg.fts_top_k,
+                    )
+                    if entity_results:
+                        fusion_input["entity"] = entity_results
+            except Exception:
+                _log.warning("Entity graph expansion failed", exc_info=True)
+
         if not fusion_input:
             return []
 
         fused = reciprocal_rank_fusion(fusion_input, weights=weights, k=cfg.fusion_k)
         fused = self._filter_deleted(fused)
+
+        # Ensure top graph/entity results reach the reranker pool even if they
+        # ranked low in fusion (structural relevance ≠ textual similarity).
+        # Give injected docs a score at the median of the fused pool so the
+        # blended reranker doesn't zero out their fusion component.
+        graph_top_ids: set[int] = set()
+        for src in ("graph", "entity"):
+            for doc_id, _ in fusion_input.get(src, [])[:10]:
+                graph_top_ids.add(doc_id)
+        if graph_top_ids:
+            fused_ids = {doc_id for doc_id, _ in fused[:50]}
+            missing = [doc_id for doc_id in graph_top_ids if doc_id not in fused_ids]
+            if missing:
+                median_score = fused[len(fused) // 2][1] if fused else 0.0
+                fused = fused[:50] + [(doc_id, median_score) for doc_id in missing]
+
         return self._rerank_and_build(query, fused, final_top_k, use_reranker=True)
 
     # -- Main search entry point -----------------------------------------
@@ -387,6 +547,7 @@ class SearchPipeline:
         """
         cfg = self._config
         final_top_k = top_k if top_k is not None else cfg.reranker_top_k
+        raw_intent = detect_query_intent(query)
 
         # Query expansion: inject code tokens for natural language queries
         if self._query_expander is not None and cfg.expansion_enabled:
@@ -411,9 +572,53 @@ class SearchPipeline:
         if effective_quality == "fast":
             results = self._search_fast(query, final_top_k)
         elif effective_quality == "balanced":
-            results = self._search_balanced(query, final_top_k)
+            results = self._search_balanced(query, final_top_k, intent=raw_intent)
         else:
-            results = self._search_thorough(query, final_top_k)
+            results = self._search_thorough(query, final_top_k, intent=raw_intent)
 
         self._record_access(results)
         return results
+
+    def search_files(self, query: str, top_k: int = 10) -> list[FileSearchResult]:
+        """File-level search: aggregate chunk results by file path.
+
+        Uses max-score aggregation per file and keeps a representative best chunk.
+        """
+        # Pull more chunks than files to avoid duplicates collapsing recall.
+        chunk_k = max(top_k * 5, top_k)
+        chunk_k = min(chunk_k, 200)
+
+        chunk_results = self.search(query, top_k=chunk_k)
+        if not chunk_results:
+            return []
+
+        best_by_path: dict[str, SearchResult] = {}
+        scores_by_path: dict[str, float] = {}
+        chunk_ids_by_path: dict[str, list[int]] = {}
+
+        for r in chunk_results:
+            prev = scores_by_path.get(r.path)
+            if prev is None or r.score > prev:
+                best_by_path[r.path] = r
+                scores_by_path[r.path] = r.score
+            chunk_ids_by_path.setdefault(r.path, []).append(r.id)
+
+        file_results: list[FileSearchResult] = []
+        for path, score in scores_by_path.items():
+            best = best_by_path[path]
+            file_results.append(
+                FileSearchResult(
+                    path=path,
+                    score=float(score),
+                    best_chunk_id=best.id,
+                    snippet=best.snippet,
+                    line=best.line,
+                    end_line=best.end_line,
+                    content=best.content,
+                    language=best.language,
+                    chunk_ids=tuple(chunk_ids_by_path.get(path, [])),
+                )
+            )
+
+        file_results.sort(key=lambda x: x.score, reverse=True)
+        return file_results[:top_k]

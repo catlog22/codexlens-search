@@ -2,6 +2,7 @@
 
 Tools:
   - Search:        Hybrid code search (semantic + FTS + AST graph + regex).
+  - locate:        LLM-driven code localization (multi-file bug/feature discovery).
   - index_project: Build, update, or inspect the search index.
   - find_files:    Glob-based file discovery.
   - watch_project: Manage file watcher for auto re-indexing.
@@ -15,12 +16,15 @@ Run: codexlens-mcp  or  python -m codexlens_search.mcp_server
   "mcpServers": {
     "codexlens": {
       "command": "uvx",
-      "args": ["--from", "codexlens-search", "codexlens-mcp"],
+      "args": ["--from", "codexlens-search[all]", "codexlens-mcp"],
       "env": {
         "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
         "CODEXLENS_EMBED_API_KEY": "sk-xxx",
         "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
-        "CODEXLENS_EMBED_DIM": "1536"
+        "CODEXLENS_EMBED_DIM": "1536",
+        "CODEXLENS_AGENT_LLM_API_KEY": "your-llm-api-key",
+        "CODEXLENS_AGENT_LLM_MODEL": "glm-5-turbo",
+        "CODEXLENS_AGENT_LLM_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
       }
     }
   }
@@ -738,7 +742,93 @@ async def _search_regex(project_path: str, pattern: str, top_k: int, scope: str)
 
 
 # ---------------------------------------------------------------------------
-# Tool 2: index_project — index / update / status
+# Tool 2: locate — LLM agent code localization
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def locate(
+    project_path: str,
+    query: str,
+    top_k: int = 10,
+    max_iterations: int = 5,
+) -> str:
+    """LLM-driven code localization — find ALL files that need changes for a bug fix or feature.
+
+    Uses an iterative agent loop: search → read → extract symbols → follow imports → discover dependencies.
+    Much more thorough than keyword search for multi-file changes.
+
+    Requires LLM API config via env vars:
+      - CODEXLENS_AGENT_LLM_API_KEY: API key (required)
+      - CODEXLENS_AGENT_LLM_MODEL: Model name (default: glm-5-turbo)
+      - CODEXLENS_AGENT_LLM_API_BASE: API base URL (default: https://open.bigmodel.cn/api/paas/v4/)
+
+    Falls back to plain semantic search if agent is not configured.
+
+    Args:
+        project_path: Absolute path to the project root.
+        query: Natural language description of the bug or feature.
+        top_k: Maximum number of files to return (default 10).
+        max_iterations: Maximum agent tool-call iterations (default 5).
+    """
+    root = Path(project_path).resolve()
+    if not root.is_dir():
+        return f"Error: project path not found: {root}"
+
+    db_path = _db_path_for_project(project_path)
+    if not (db_path / "metadata.db").exists():
+        return (
+            "Error: no index found. Run index_project first, then use locate.\n"
+            "The agent needs an indexed codebase to search through."
+        )
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, _run_locate, project_path, query, top_k, max_iterations,
+    )
+    return result
+
+
+def _run_locate(project_path: str, query: str, top_k: int, max_iterations: int) -> str:
+    """Run CodeLocAgent in executor thread."""
+    from codexlens_search.bridge import create_agent
+
+    root = Path(project_path).resolve()
+    _, search, config = _get_pipelines(project_path)
+
+    config.agent_enabled = True
+    entity_graph = getattr(search, "_entity_graph", None)
+
+    try:
+        agent = create_agent(search, entity_graph, config)
+    except Exception as exc:
+        log.warning("Failed to create agent: %s", exc)
+        return f"Error: failed to create agent: {exc}"
+
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(root)
+        results = agent.run(query, max_iterations=max_iterations, top_k=top_k)
+    except Exception as exc:
+        log.error("Agent run failed: %s", exc, exc_info=True)
+        return f"Error: agent run failed: {exc}"
+    finally:
+        os.chdir(old_cwd)
+
+    if not results:
+        return "No relevant files found."
+
+    lines = []
+    for i, r in enumerate(results, 1):
+        score_str = f" (score: {r.score:.4f})" if r.score > 0 else ""
+        loc = f" L{r.line}-{r.end_line}" if r.line and r.end_line else ""
+        lines.append(f"{i}. **{r.path}**{loc}{score_str}")
+
+    header = f"Found {len(results)} file(s) relevant to: *{query[:100]}*\n"
+    return header + "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool 3: index_project — index / update / status
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
@@ -871,7 +961,7 @@ def _index_status(project_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 3: find_files
+# Tool 4: find_files
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
@@ -910,7 +1000,7 @@ def find_files(
 
 
 # ---------------------------------------------------------------------------
-# Tool 4: watch_project — manage file watcher
+# Tool 5: watch_project — manage file watcher
 # ---------------------------------------------------------------------------
 
 @mcp.tool()

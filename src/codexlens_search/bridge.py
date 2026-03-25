@@ -160,6 +160,42 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
     # Query expansion
     if os.environ.get("CODEXLENS_EXPANSION_ENABLED"):
         kwargs["expansion_enabled"] = os.environ["CODEXLENS_EXPANSION_ENABLED"].lower() in ("true", "1", "yes")
+    # Symbol-level search boost
+    if os.environ.get("CODEXLENS_SYMBOL_SEARCH_ENABLED"):
+        kwargs["symbol_search_enabled"] = os.environ["CODEXLENS_SYMBOL_SEARCH_ENABLED"].lower() in ("true", "1", "yes")
+    # Entity graph expansion
+    if os.environ.get("CODEXLENS_ENTITY_GRAPH_ENABLED"):
+        kwargs["entity_graph_enabled"] = os.environ["CODEXLENS_ENTITY_GRAPH_ENABLED"].lower() in ("true", "1", "yes")
+    # Agent loop (LLM)
+    if os.environ.get("CODEXLENS_AGENT_ENABLED"):
+        kwargs["agent_enabled"] = os.environ["CODEXLENS_AGENT_ENABLED"].lower() in ("true", "1", "yes")
+    if os.environ.get("CODEXLENS_AGENT_LLM_MODEL"):
+        kwargs["agent_llm_model"] = os.environ["CODEXLENS_AGENT_LLM_MODEL"]
+    if os.environ.get("CODEXLENS_AGENT_LLM_API_KEY"):
+        kwargs["agent_llm_api_key"] = os.environ["CODEXLENS_AGENT_LLM_API_KEY"]
+    if os.environ.get("CODEXLENS_AGENT_LLM_API_BASE"):
+        kwargs["agent_llm_api_base"] = os.environ["CODEXLENS_AGENT_LLM_API_BASE"]
+    if os.environ.get("CODEXLENS_AGENT_MAX_ITERATIONS"):
+        kwargs["agent_max_iterations"] = int(os.environ["CODEXLENS_AGENT_MAX_ITERATIONS"])
+    # Graph weights (allow partial overrides)
+    kind_overrides: dict[str, float] = {}
+    if os.environ.get("CODEXLENS_GRAPH_IMPORT_WEIGHT"):
+        kind_overrides["import"] = float(os.environ["CODEXLENS_GRAPH_IMPORT_WEIGHT"])
+    if os.environ.get("CODEXLENS_GRAPH_CALL_WEIGHT"):
+        kind_overrides["call"] = float(os.environ["CODEXLENS_GRAPH_CALL_WEIGHT"])
+    if os.environ.get("CODEXLENS_GRAPH_INHERIT_WEIGHT"):
+        kind_overrides["inherit"] = float(os.environ["CODEXLENS_GRAPH_INHERIT_WEIGHT"])
+    if os.environ.get("CODEXLENS_GRAPH_TYPE_REF_WEIGHT"):
+        kind_overrides["type_ref"] = float(os.environ["CODEXLENS_GRAPH_TYPE_REF_WEIGHT"])
+    if kind_overrides:
+        kwargs["graph_kind_weights"] = kind_overrides
+    dir_overrides: dict[str, float] = {}
+    if os.environ.get("CODEXLENS_GRAPH_BACKWARD_WEIGHT"):
+        dir_overrides["backward"] = float(os.environ["CODEXLENS_GRAPH_BACKWARD_WEIGHT"])
+    if os.environ.get("CODEXLENS_GRAPH_FORWARD_WEIGHT"):
+        dir_overrides["forward"] = float(os.environ["CODEXLENS_GRAPH_FORWARD_WEIGHT"])
+    if dir_overrides:
+        kwargs["graph_dir_weights"] = dir_overrides
     resolved = Path(db_path).resolve()
     kwargs["metadata_db_path"] = str(resolved / "metadata.db")
     return Config(**kwargs)
@@ -275,9 +311,27 @@ def create_pipeline(
     from codexlens_search.search.graph import GraphSearcher
     graph_searcher: GraphSearcher | None = None
     try:
-        graph_searcher = GraphSearcher(fts, expand_hops=1)
+        graph_searcher = GraphSearcher(
+            fts,
+            expand_hops=1,
+            kind_weights=config.graph_kind_weights,
+            dir_weights=config.graph_dir_weights,
+        )
     except Exception:
         pass
+
+    # EntityGraph: optional dependency graph expansion
+    from codexlens_search.core.entity_graph import EntityGraph
+    entity_graph: EntityGraph | None = None
+    try:
+        entity_graph = EntityGraph(
+            fts,
+            depth=config.entity_graph_depth,
+            backend=config.entity_graph_backend,
+            enabled=config.entity_graph_enabled,
+        )
+    except Exception:
+        log.warning("Failed to create EntityGraph", exc_info=True)
 
     indexing = IndexingPipeline(
         embedder=embedder,
@@ -286,6 +340,7 @@ def create_pipeline(
         fts=fts,
         config=config,
         metadata=metadata,
+        entity_graph=entity_graph,
     )
 
     # QueryExpander: two-hop symbol vocabulary expansion
@@ -306,10 +361,25 @@ def create_pipeline(
         config=config,
         metadata_store=metadata,
         graph_searcher=graph_searcher,
+        entity_graph=entity_graph,
         query_expander=query_expander,
     )
 
     return indexing, search, config
+
+
+def create_agent(search_pipeline, entity_graph, config: "Config"):
+    """Create a CodeLocAgent from pipeline components.
+
+    Kept as a separate factory to avoid importing optional LLM deps at import time.
+    """
+    from codexlens_search.agent.loc_agent import CodeLocAgent
+
+    return CodeLocAgent(
+        search_pipeline=search_pipeline,
+        entity_graph=entity_graph,
+        config=config,
+    )
 
 
 def _create_pipeline(
@@ -360,6 +430,115 @@ def cmd_search(args: argparse.Namespace) -> None:
         }
         for r in results
     ])
+
+
+def cmd_search_files(args: argparse.Namespace) -> None:
+    """Run search query, output JSON array of file-level aggregated results."""
+    _, search, _ = _create_pipeline(args)
+
+    results = search.search_files(args.query, top_k=args.top_k)
+    _json_output([
+        {
+            "path": r.path,
+            "score": r.score,
+            "best_chunk_id": r.best_chunk_id,
+            "line": r.line,
+            "end_line": r.end_line,
+            "snippet": r.snippet,
+            "content": r.content,
+            "chunk_ids": list(r.chunk_ids),
+        }
+        for r in results
+    ])
+
+
+def cmd_locate(args: argparse.Namespace) -> None:
+    """Run LLM-driven localization loop, output JSON array of file-level results."""
+    _, search, config = _create_pipeline(args)
+
+    config.agent_enabled = True
+    max_iters = args.max_iterations if args.max_iterations is not None else config.agent_max_iterations
+
+    entity_graph = getattr(search, "_entity_graph", None)
+    agent = create_agent(search, entity_graph, config)
+    results = agent.run(args.query, max_iterations=max_iters, top_k=args.top_k)
+
+    _json_output(
+        [
+            {
+                "path": r.path,
+                "score": r.score,
+                "best_chunk_id": r.best_chunk_id,
+                "line": r.line,
+                "end_line": r.end_line,
+                "snippet": r.snippet,
+                "content": r.content,
+                "chunk_ids": list(r.chunk_ids),
+            }
+            for r in results
+        ]
+    )
+
+
+def cmd_traverse(args: argparse.Namespace) -> None:
+    """Traverse the entity dependency graph from a seed symbol or file path."""
+    _, search, config = _create_pipeline(args)
+    entity_graph = getattr(search, "_entity_graph", None)
+    if entity_graph is None or not config.entity_graph_enabled:
+        _json_output([])
+        return
+
+    from codexlens_search.core.entity import EntityId, EntityKind
+
+    seed = str(args.entity)
+    depth = args.depth if args.depth is not None else config.entity_graph_depth
+
+    seeds: list[EntityId] = []
+    if "/" in seed or "\\" in seed:
+        seeds.append(EntityId(file_path=seed, symbol_name="", kind=EntityKind.FILE, start_line=0, end_line=0))
+    else:
+        syms = search._fts.get_symbols_by_name(seed)
+        for sym in syms[:5]:
+            cid = sym.get("chunk_id")
+            if cid is None:
+                continue
+            path = search._fts.get_doc_meta(int(cid))[0]
+            try:
+                kind = EntityKind(str(sym.get("kind", "")).lower())
+            except Exception:
+                continue
+            seeds.append(
+                EntityId(
+                    file_path=path,
+                    symbol_name=str(sym.get("name", "")),
+                    kind=kind,
+                    start_line=int(sym.get("start_line", 0) or 0),
+                    end_line=int(sym.get("end_line", 0) or 0),
+                )
+            )
+
+    if not seeds:
+        _json_output([])
+        return
+
+    seen: set[str] = set()
+    out = []
+    for s in seeds:
+        for ent in entity_graph.traverse(s, depth=depth):
+            key = ent.to_key()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "file_path": ent.file_path,
+                    "symbol_name": ent.symbol_name,
+                    "kind": ent.kind.value,
+                    "start_line": ent.start_line,
+                    "end_line": ent.end_line,
+                }
+            )
+    _json_output(out)
 
 
 def cmd_index_file(args: argparse.Namespace) -> None:
@@ -517,8 +696,9 @@ def cmd_list_models(args: argparse.Namespace) -> None:
     config = _create_config(args)
     models = model_manager.list_known_models(config)
 
+    # JSON protocol: always emit JSON to stdout (human output goes to stderr).
+    _json_output(models)
     if getattr(args, "json", False):
-        _json_output(models)
         return
 
     embed = [m for m in models if m["type"] == "embedding"]
@@ -527,14 +707,14 @@ def cmd_list_models(args: argparse.Namespace) -> None:
     W = 95
 
     def _table(title: str, rows: list[dict], show_dim: bool) -> None:
-        print(f"\n  {title}")
-        print(f"  {'─' * W}")
+        print(f"\n  {title}", file=sys.stderr)
+        print(f"  {'─' * W}", file=sys.stderr)
         if show_dim:
             hdr = f"  {'':2} {'Model':<44} {'Dim':>5} {'Tokens':>6} {'Size':>7} {'Lang':<6} {'Notes'}"
         else:
             hdr = f"  {'':2} {'Model':<44} {'Size':>7} {'Lang':<6} {'Notes'}"
-        print(hdr)
-        print(f"  {'─' * W}")
+        print(hdr, file=sys.stderr)
+        print(f"  {'─' * W}", file=sys.stderr)
         for m in rows:
             mark = "●" if m["installed"] else "○"
             tag = " *" if m.get("default") else ""
@@ -543,16 +723,25 @@ def cmd_list_models(args: argparse.Namespace) -> None:
             if show_dim:
                 dim = str(m["dim"]) if m["dim"] else "-"
                 tokens = str(m.get("max_tokens") or "-")
-                print(f"  {mark:2} {name:<44} {dim:>5} {tokens:>6} {size:>7} {m['lang']:<6} {m['notes']}")
+                print(
+                    f"  {mark:2} {name:<44} {dim:>5} {tokens:>6} {size:>7} {m['lang']:<6} {m['notes']}",
+                    file=sys.stderr,
+                )
             else:
-                print(f"  {mark:2} {name:<44} {size:>7} {m['lang']:<6} {m['notes']}")
-        print()
+                print(
+                    f"  {mark:2} {name:<44} {size:>7} {m['lang']:<6} {m['notes']}",
+                    file=sys.stderr,
+                )
+        print(file=sys.stderr)
 
     _table("Embedding Models", embed, show_dim=True)
     _table("Reranker Models", rerank, show_dim=False)
-    print(f"  ● installed  ○ not installed  * current default")
-    print(f"  Cache: {model_manager._resolve_cache_dir(config) or model_manager._default_fastembed_cache()}")
-    print()
+    print(f"  ● installed  ○ not installed  * current default", file=sys.stderr)
+    print(
+        f"  Cache: {model_manager._resolve_cache_dir(config) or model_manager._default_fastembed_cache()}",
+        file=sys.stderr,
+    )
+    print(file=sys.stderr)
 
 
 def cmd_download_model(args: argparse.Namespace) -> None:
@@ -663,6 +852,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("--query", "-q", required=True, help="Search query")
     p_search.add_argument("--top-k", "-k", type=int, default=10, help="Number of results")
 
+    # search-files
+    p_search_files = sub.add_parser("search-files", help="Search the index (file-level aggregation)")
+    p_search_files.add_argument("--query", "-q", required=True, help="Search query")
+    p_search_files.add_argument("--top-k", "-k", type=int, default=10, help="Number of files")
+
+    # locate (LLM agent loop)
+    p_locate = sub.add_parser("locate", help="Locate code with LLM agent loop")
+    p_locate.add_argument("--query", "-q", required=True, help="Search query")
+    p_locate.add_argument("--top-k", "-k", type=int, default=10, help="Number of files")
+    p_locate.add_argument("--max-iterations", type=int, default=None, help="Max tool iterations (default: config/env)")
+
+    # traverse
+    p_traverse = sub.add_parser("traverse", help="Traverse entity dependency graph")
+    p_traverse.add_argument("entity", help="Entity name (symbol) or file path")
+    p_traverse.add_argument("--depth", type=int, default=None, help="Traversal depth (default: config)")
+
     # index-file
     p_index = sub.add_parser("index-file", help="Index a single file")
     p_index.add_argument("--file", "-f", required=True, help="File path to index")
@@ -736,6 +941,9 @@ def main() -> None:
     dispatch = {
         "init": cmd_init,
         "search": cmd_search,
+        "search-files": cmd_search_files,
+        "locate": cmd_locate,
+        "traverse": cmd_traverse,
         "index-file": cmd_index_file,
         "remove-file": cmd_remove_file,
         "sync": cmd_sync,

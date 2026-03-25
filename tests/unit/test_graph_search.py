@@ -36,19 +36,19 @@ class TestScoreEdge:
         gs = GraphSearcher(fts)
         score = gs._score_edge("import", "backward", 1)
         assert score == _KIND_WEIGHT["import"] * _DIR_WEIGHT["backward"] * 1.0
-        assert score == 1.0  # 1.0 * 1.0 * 1.0
+        assert score == 1.3  # 1.0 * 1.3 * 1.0
 
     def test_call_forward_distance_1(self) -> None:
         fts = _make_fts_mock()
         gs = GraphSearcher(fts)
         score = gs._score_edge("call", "forward", 1)
-        assert score == pytest.approx(0.8 * 0.6 * 1.0)
+        assert score == pytest.approx(1.5 * 0.6 * 1.0)
 
     def test_unknown_kind_uses_default(self) -> None:
         fts = _make_fts_mock()
         gs = GraphSearcher(fts)
         score = gs._score_edge("unknown_kind", "backward", 1)
-        assert score == pytest.approx(0.3 * 1.0 * 1.0)
+        assert score == pytest.approx(0.3 * 1.3 * 1.0)
 
     def test_distance_decay(self) -> None:
         fts = _make_fts_mock()

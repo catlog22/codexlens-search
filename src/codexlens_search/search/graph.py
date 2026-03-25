@@ -9,13 +9,13 @@ _log = logging.getLogger(__name__)
 
 _KIND_WEIGHT: dict[str, float] = {
     "import": 1.0,
-    "call": 0.8,
-    "inherit": 0.7,
+    "call": 1.5,
+    "inherit": 0.9,
     "type_ref": 0.3,
 }
 
 _DIR_WEIGHT: dict[str, float] = {
-    "backward": 1.0,
+    "backward": 1.3,
     "forward": 0.6,
 }
 
@@ -23,9 +23,22 @@ _DIR_WEIGHT: dict[str, float] = {
 class GraphSearcher:
     """Search code graph using symbol_refs edges from FTSEngine."""
 
-    def __init__(self, fts: FTSEngine, expand_hops: int = 0) -> None:
+    def __init__(
+        self,
+        fts: FTSEngine,
+        expand_hops: int = 0,
+        *,
+        kind_weights: dict[str, float] | None = None,
+        dir_weights: dict[str, float] | None = None,
+    ) -> None:
         self._fts = fts
         self._expand_hops = expand_hops
+        self._kind_weight = dict(_KIND_WEIGHT)
+        if kind_weights:
+            self._kind_weight.update(kind_weights)
+        self._dir_weight = dict(_DIR_WEIGHT)
+        if dir_weights:
+            self._dir_weight.update(dir_weights)
 
     def search(self, query: str, top_k: int = 50) -> list[tuple[int, float]]:
         """Find chunks related to query via symbol reference graph.
@@ -112,8 +125,8 @@ class GraphSearcher:
 
     def _score_edge(self, ref_kind: str, direction: str, distance: int) -> float:
         """Score a single graph edge based on kind, direction, and distance."""
-        kw = _KIND_WEIGHT.get(ref_kind, 0.3)
-        dw = _DIR_WEIGHT.get(direction, 0.6)
+        kw = self._kind_weight.get(ref_kind, 0.3)
+        dw = self._dir_weight.get(direction, 0.6)
         return kw * dw * (1.0 / distance)
 
     def _find_seed_symbols(self, query: str) -> list[dict]:

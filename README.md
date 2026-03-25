@@ -31,7 +31,7 @@ Add to your project `.mcp.json`:
 }
 ```
 
-That's it. Claude Code will auto-discover the tools: `index_project` -> `Search`.
+That's it. Claude Code will auto-discover the tools: `index_project` -> `Search` -> `locate`.
 
 ## Install
 
@@ -123,6 +123,46 @@ When no index exists, `auto` mode uses a focused search pipeline instead of wait
 5. **Background** — full index builds asynchronously for next queries
 
 This gives semantic results in ~10s vs ~100s for a full index build.
+
+### locate
+
+LLM-driven code localization — finds ALL files that need changes for a bug fix or feature request.
+
+Uses an iterative agent loop: search → read files → extract symbols → follow imports → discover dependencies. Much more thorough than keyword search for multi-file changes.
+
+Parameters: `project_path`, `query`, `top_k` (default 10), `max_iterations` (default 5)
+
+Requires LLM API configuration (any OpenAI-compatible API — GLM, DeepSeek, Qwen, OpenAI, etc.):
+
+```json
+{
+  "mcpServers": {
+    "codexlens": {
+      "command": "uvx",
+      "args": ["--from", "codexlens-search[all]", "codexlens-mcp"],
+      "env": {
+        "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
+        "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
+        "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
+        "CODEXLENS_EMBED_DIM": "1536",
+        "CODEXLENS_AGENT_LLM_API_KEY": "${GLM_API_KEY}",
+        "CODEXLENS_AGENT_LLM_MODEL": "glm-5-turbo",
+        "CODEXLENS_AGENT_LLM_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
+      }
+    }
+  }
+}
+```
+
+Falls back to plain semantic search if no LLM API key is configured.
+
+#### How it works
+
+1. **Initial Search** — searches codebase with keywords from the query
+2. **Read Top Files** — reads top 3-5 files to understand code structure
+3. **Symbol Extraction** — identifies function/class names, searches for exact symbol names
+4. **Dependency Discovery** — follows imports and entity graph edges to find related files
+5. **Import-Aware Expansion** — automatically resolves project-local imports from top-ranked files, interleaving structurally-related files even if they share no keywords with the query
 
 ### index_project
 
@@ -385,6 +425,15 @@ codexlens-search delete-model BAAI/bge-small-en-v1.5
 | `CODEXLENS_RERANKER_API_URL` | Reranker API base URL |
 | `CODEXLENS_RERANKER_API_KEY` | API key |
 | `CODEXLENS_RERANKER_API_MODEL` | Model name |
+
+### LLM Agent (locate tool)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEXLENS_AGENT_LLM_API_KEY` | | API key for LLM (required for locate) |
+| `CODEXLENS_AGENT_LLM_MODEL` | `glm-5-turbo` | Model name (any OpenAI-compatible) |
+| `CODEXLENS_AGENT_LLM_API_BASE` | `https://open.bigmodel.cn/api/paas/v4/` | API base URL |
+| `CODEXLENS_AGENT_MAX_ITERATIONS` | `5` | Max agent tool-call iterations |
 
 ### Features
 

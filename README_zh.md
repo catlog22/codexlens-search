@@ -31,7 +31,7 @@ pip install codexlens-search[all]
 }
 ```
 
-完成。Claude Code 会自动发现工具：`index_project` -> `Search`。
+完成。Claude Code 会自动发现工具：`index_project` -> `Search` -> `locate`。
 
 ## 安装
 
@@ -123,6 +123,46 @@ CODEXLENS_ANN_BACKEND=auto     # 自动选择（usearch > faiss > hnswlib）
 5. **后台** — 异步构建全量索引供后续查询使用
 
 首次查询 ~10s 出结果，而非等待全量索引 ~100s。
+
+### locate
+
+LLM 驱动的代码定位 — 找到修复 Bug 或实现特性所需的**全部**文件。
+
+使用迭代 Agent 循环：搜索 → 读文件 → 提取符号 → 跟踪 import → 发现依赖。对于多文件变更场景，比关键词搜索更全面。
+
+参数：`project_path`、`query`、`top_k`（默认 10）、`max_iterations`（默认 5）
+
+需要 LLM API 配置（支持任何 OpenAI 兼容 API — GLM/智谱、DeepSeek、通义千问、OpenAI 等）：
+
+```json
+{
+  "mcpServers": {
+    "codexlens": {
+      "command": "uvx",
+      "args": ["--from", "codexlens-search[all]", "codexlens-mcp"],
+      "env": {
+        "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
+        "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
+        "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
+        "CODEXLENS_EMBED_DIM": "1536",
+        "CODEXLENS_AGENT_LLM_API_KEY": "${GLM_API_KEY}",
+        "CODEXLENS_AGENT_LLM_MODEL": "glm-5-turbo",
+        "CODEXLENS_AGENT_LLM_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
+      }
+    }
+  }
+}
+```
+
+未配置 LLM API Key 时自动降级为普通语义搜索。
+
+#### 工作流程
+
+1. **初始搜索** — 从查询中提取关键词搜索代码库
+2. **阅读文件** — 读取 Top 3-5 文件，理解代码结构
+3. **符号提取** — 识别函数/类名，用精确符号名进行二次搜索
+4. **依赖发现** — 跟踪 import 关系和实体图边，发现关联文件
+5. **Import 感知扩展** — 自动解析 top 文件的项目内 import，将结构相关文件交织插入结果（即使与查询无关键词重叠）
 
 ### index_project
 
@@ -388,6 +428,15 @@ codexlens-search delete-model BAAI/bge-small-en-v1.5
 | `CODEXLENS_RERANKER_API_URL` | 重排序 API 基础 URL |
 | `CODEXLENS_RERANKER_API_KEY` | API 密钥 |
 | `CODEXLENS_RERANKER_API_MODEL` | 模型名 |
+
+### LLM Agent（locate 工具）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CODEXLENS_AGENT_LLM_API_KEY` | | LLM API 密钥（locate 必需） |
+| `CODEXLENS_AGENT_LLM_MODEL` | `glm-5-turbo` | 模型名（任何 OpenAI 兼容 API） |
+| `CODEXLENS_AGENT_LLM_API_BASE` | `https://open.bigmodel.cn/api/paas/v4/` | API 基础 URL |
+| `CODEXLENS_AGENT_MAX_ITERATIONS` | `5` | Agent 最大工具调用迭代次数 |
 
 ### 功能开关
 

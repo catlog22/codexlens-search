@@ -14,6 +14,7 @@ polluting code-symbol queries that already work well.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 
 import numpy as np
@@ -24,6 +25,91 @@ from .fts import FTSEngine
 from .fusion import QueryIntent, detect_query_intent
 
 _log = logging.getLogger(__name__)
+
+_IDENT_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Common abbreviations seen in code and issue descriptions.
+_ABBREV_MAP: dict[str, str] = {
+    "auth": "authentication",
+    "cfg": "config",
+    "conf": "config",
+    "db": "database",
+    "svc": "service",
+    "repo": "repository",
+    "ctx": "context",
+    "env": "environment",
+    "req": "request",
+    "resp": "response",
+    "msg": "message",
+    "init": "initialize",
+    "impl": "implementation",
+    "deps": "dependencies",
+    "perms": "permissions",
+}
+
+
+def _split_identifier(token: str) -> list[str]:
+    """Split CamelCase / snake_case identifier into lowercased parts."""
+    t = token.strip("_")
+    if not t:
+        return []
+
+    # snake_case → spaces
+    t = t.replace("_", " ")
+    # HTTPServer → HTTP Server, getUserName → get User Name
+    t = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", t)
+    t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", t)
+
+    parts = [p.lower() for p in t.split() if p]
+    # Filter trivial parts ("i", "x")
+    return [p for p in parts if len(p) > 1]
+
+
+def _split_identifiers(text: str, max_terms: int = 20) -> list[str]:
+    """Extract and split identifiers from free-form text into search terms."""
+    tokens = _IDENT_TOKEN_RE.findall(text)
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    existing = {t.lower() for t in tokens}
+    for tok in tokens:
+        parts = _split_identifier(tok)
+        if len(parts) <= 1 and "_" not in tok and tok.lower() not in _ABBREV_MAP:
+            continue
+
+        for p in parts or [tok.lower()]:
+            expanded = _ABBREV_MAP.get(p)
+            if expanded and expanded not in seen and expanded not in existing:
+                seen.add(expanded)
+                terms.append(expanded)
+                if len(terms) >= max_terms:
+                    return terms
+
+            if p in seen or p in existing:
+                continue
+            seen.add(p)
+            terms.append(p)
+            if len(terms) >= max_terms:
+                return terms
+
+    return terms
+
+
+def _term_matches_query(term: str, query_words: set[str]) -> bool:
+    """Heuristic filter: keep expansion terms that lexically match query words."""
+    parts = _split_identifier(term)
+    if not parts:
+        parts = [term.lower()]
+
+    for p in parts:
+        if len(p) < 3:
+            continue
+        for qw in query_words:
+            if qw == p:
+                return True
+            if qw.startswith(p) or p.startswith(qw):
+                return True
+    return False
 
 
 class QueryExpander:
@@ -56,6 +142,7 @@ class QueryExpander:
     def _build_vocab(self) -> None:
         """Extract symbols + file stems, embed them as vocabulary vectors."""
         names: list[str] = []
+        embed_texts: list[str] = []
         kinds: list[str] = []
         is_public: list[bool] = []
 
@@ -65,6 +152,9 @@ class QueryExpander:
         ).fetchall()
         for name, kind in rows:
             names.append(name)
+            extra = _split_identifier(name)
+            extras = extra + [_ABBREV_MAP[t] for t in extra if t in _ABBREV_MAP]
+            embed_texts.append(f"{name} {' '.join(extras)}".strip() if extras else name)
             kinds.append(kind or "")
             is_public.append(not name.startswith("_"))
 
@@ -80,6 +170,9 @@ class QueryExpander:
                 if len(stem) > 2 and stem.lower() not in seen:
                     seen.add(stem.lower())
                     names.append(stem)
+                    extra = _split_identifier(stem)
+                    extras = extra + [_ABBREV_MAP[t] for t in extra if t in _ABBREV_MAP]
+                    embed_texts.append(f"{stem} {' '.join(extras)}".strip() if extras else stem)
                     kinds.append("file")
                     is_public.append(True)
 
@@ -91,7 +184,7 @@ class QueryExpander:
             return
 
         # Batch embed
-        vecs = self._embedder.embed_batch(names)
+        vecs = self._embedder.embed_batch(embed_texts)
         arr = np.array(vecs, dtype=np.float32)
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
@@ -108,9 +201,15 @@ class QueryExpander:
 
         For CODE_SYMBOL queries, returns the original query unchanged.
         """
+        word_count = len(query.strip().split())
         intent = detect_query_intent(query)
-        if intent == QueryIntent.CODE_SYMBOL:
+        # Long natural-language issues may contain code blocks and still benefit from expansion.
+        if intent == QueryIntent.CODE_SYMBOL and word_count < 20:
             return query
+
+        # Pre-expand: split identifiers and apply abbreviation mapping.
+        pre_terms = _split_identifiers(query)
+        embed_query = f"{query} {' '.join(pre_terms)}".strip() if pre_terms else query
 
         self._ensure_vocab()
         if self._vocab_vecs is None or len(self._vocab_vecs) == 0:
@@ -121,14 +220,22 @@ class QueryExpander:
         threshold = cfg.expansion_threshold
 
         # First hop: find nearest symbols by cosine similarity
-        first_hop = self._vec_expand(query, top_k, threshold)
+        first_hop = self._vec_expand(embed_query, top_k, threshold)
+        # Short keyword-style queries are prone to noisy expansion; filter + skip 2nd hop.
+        if first_hop and word_count < 8:
+            query_words = {w.lower() for w in re.findall(r"[A-Za-z]+", query)}
+            first_hop = [t for t in first_hop if _term_matches_query(t, query_words)]
         if not first_hop:
+            if pre_terms:
+                return f"{query} {' '.join(pre_terms)}"
             return query
 
         # Second hop: find chunk neighbors of first-hop symbols
-        second_hop = self._neighbor_expand(query, first_hop)
+        second_hop: list[str] = []
+        if word_count >= 8:
+            second_hop = self._neighbor_expand(embed_query, first_hop)
 
-        all_terms = first_hop + second_hop
+        all_terms = pre_terms + first_hop + second_hop
         if all_terms:
             expanded = f"{query} {' '.join(all_terms)}"
             _log.debug("Query expanded: '%s' -> '%s'", query, expanded)

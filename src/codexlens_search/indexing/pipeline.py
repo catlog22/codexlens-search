@@ -18,6 +18,7 @@ import numpy as np
 
 from codexlens_search.config import Config
 from codexlens_search.core.base import BaseANNIndex, BaseBinaryIndex
+from codexlens_search.core.entity_graph import EntityGraph
 from codexlens_search.embed.base import BaseEmbedder
 from codexlens_search.indexing.metadata import MetadataStore
 from codexlens_search.search.fts import FTSEngine
@@ -232,6 +233,7 @@ class IndexingPipeline:
         fts: FTSEngine,
         config: Config,
         metadata: MetadataStore | None = None,
+        entity_graph: EntityGraph | None = None,
     ) -> None:
         self._embedder = embedder
         self._binary_store = binary_store
@@ -239,6 +241,7 @@ class IndexingPipeline:
         self._fts = fts
         self._config = config
         self._metadata = metadata
+        self._entity_graph = entity_graph
         self._gitignore_matcher = None
 
     def _get_gitignore_matcher(self, root: Path | None) -> "GitignoreAwareMatcher | None":
@@ -393,6 +396,7 @@ class IndexingPipeline:
         if all_refs:
             self._fts.add_refs(all_refs)
             self._fts.resolve_refs()
+            self._update_entity_graph(all_symbols, all_refs)
 
         # Final commit for symbols/refs
         self._fts.flush()
@@ -870,6 +874,102 @@ class IndexingPipeline:
             for ref in refs
         ]
 
+    def _update_entity_graph(
+        self,
+        symbol_rows: list[tuple[int, str, str, int, int, str, str, str]],
+        ref_rows: list[tuple[str, str, str, str, int]],
+    ) -> None:
+        if self._entity_graph is None or not self._config.entity_graph_enabled:
+            return
+        if not ref_rows:
+            return
+
+        from codexlens_search.core.entity import EntityId, EntityKind
+
+        kind_map: dict[str, EntityKind] = {
+            "class": EntityKind.CLASS,
+            "function": EntityKind.FUNCTION,
+            "method": EntityKind.METHOD,
+            "module": EntityKind.MODULE,
+        }
+
+        def _file_entity(path: str) -> EntityId:
+            return EntityId(
+                file_path=path,
+                symbol_name="",
+                kind=EntityKind.FILE,
+                start_line=0,
+                end_line=0,
+            )
+
+        symbols_by_key: dict[tuple[str, str], EntityId] = {}
+        for chunk_id, name, kind, start_line, end_line, _parent, _sig, _lang in symbol_rows:
+            ent_kind = kind_map.get(str(kind).lower())
+            if ent_kind is None:
+                continue
+            path = self._fts.get_doc_meta(int(chunk_id))[0]
+            if not path:
+                continue
+            symbols_by_key.setdefault(
+                (path, name),
+                EntityId(
+                    file_path=path,
+                    symbol_name=name,
+                    kind=ent_kind,
+                    start_line=int(start_line or 0),
+                    end_line=int(end_line or 0),
+                ),
+            )
+
+        edge_rows: list[tuple[str, str, str, float]] = []
+        allowed_kinds = {"import", "call", "inherit"}
+
+        for from_name, from_path, to_name, ref_kind, _line in ref_rows:
+            ref_kind_norm = str(ref_kind).lower()
+            if ref_kind_norm not in allowed_kinds:
+                continue
+
+            to_symbols = self._fts.get_symbols_by_name(to_name)
+            if not to_symbols:
+                continue
+            to_sym = to_symbols[0]
+            to_chunk = to_sym.get("chunk_id")
+            if to_chunk is None:
+                continue
+            to_path = self._fts.get_doc_meta(int(to_chunk))[0]
+            if not to_path:
+                continue
+
+            from_file = _file_entity(from_path)
+            to_file = _file_entity(to_path)
+            weight = 1.0
+
+            self._entity_graph.add_edge(from_file, to_file, ref_kind_norm, weight=weight, bidirectional=True)
+            edge_rows.append((from_file.to_key(), to_file.to_key(), ref_kind_norm, weight))
+            edge_rows.append((to_file.to_key(), from_file.to_key(), ref_kind_norm, weight))
+
+            from_sym_ent = symbols_by_key.get((from_path, from_name))
+            to_ent_kind = kind_map.get(str(to_sym.get("kind", "")).lower())
+            if from_sym_ent is None or to_ent_kind is None:
+                continue
+
+            to_sym_ent = EntityId(
+                file_path=to_path,
+                symbol_name=str(to_sym.get("name", "")),
+                kind=to_ent_kind,
+                start_line=int(to_sym.get("start_line", 0) or 0),
+                end_line=int(to_sym.get("end_line", 0) or 0),
+            )
+            self._entity_graph.add_edge(from_sym_ent, to_sym_ent, ref_kind_norm, weight=weight, bidirectional=True)
+            edge_rows.append((from_sym_ent.to_key(), to_sym_ent.to_key(), ref_kind_norm, weight))
+            edge_rows.append((to_sym_ent.to_key(), from_sym_ent.to_key(), ref_kind_norm, weight))
+
+        if edge_rows and hasattr(self._fts, "add_entity_edges"):
+            try:
+                self._fts.add_entity_edges(edge_rows)
+            except Exception:
+                logger.debug("Failed to persist entity edges", exc_info=True)
+
     # ------------------------------------------------------------------
     # Incremental API
     # ------------------------------------------------------------------
@@ -1122,6 +1222,7 @@ class IndexingPipeline:
             if ref_rows:
                 self._fts.add_refs(ref_rows)
                 self._fts.resolve_refs()
+                self._update_entity_graph(sym_rows, ref_rows)
 
         # Register in metadata
         st = file_path.stat()
@@ -1531,6 +1632,7 @@ class IndexingPipeline:
         if all_refs:
             self._fts.add_refs(all_refs)
             self._fts.resolve_refs()
+            self._update_entity_graph(all_symbols, all_refs)
 
         # Final commit for symbols/refs and metadata
         self._fts.flush()

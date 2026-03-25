@@ -4,10 +4,12 @@ import re
 from enum import Enum
 
 DEFAULT_WEIGHTS: dict[str, float] = {
-    "exact": 0.25,
-    "fuzzy": 0.10,
-    "vector": 0.50,
-    "graph": 0.15,
+    "exact": 0.17,
+    "fuzzy": 0.085,
+    "vector": 0.34,
+    "graph": 0.085,
+    "symbol": 0.17,
+    "entity": 0.15,
 }
 
 _CODE_CAMEL_RE = re.compile(r"[a-z][A-Z]")
@@ -27,6 +29,13 @@ def detect_query_intent(query: str) -> QueryIntent:
     """Detect whether query is a code symbol, natural language, or mixed."""
     words = query.strip().split()
     word_count = len(words)
+
+    # Long queries (bug reports, issue descriptions) are natural language
+    # even if they contain code snippets or identifiers.
+    if word_count > 20:
+        return QueryIntent.NATURAL_LANGUAGE
+    if word_count > 10:
+        return QueryIntent.MIXED
 
     code_signals = 0
     natural_signals = 0
@@ -55,8 +64,6 @@ def detect_query_intent(query: str) -> QueryIntent:
         return QueryIntent.CODE_SYMBOL
     if natural_signals >= 2 and code_signals == 0:
         return QueryIntent.NATURAL_LANGUAGE
-    if code_signals >= 2 and natural_signals == 0:
-        return QueryIntent.CODE_SYMBOL
     if natural_signals > code_signals:
         return QueryIntent.NATURAL_LANGUAGE
     if code_signals > natural_signals:
@@ -68,21 +75,28 @@ def get_adaptive_weights(intent: QueryIntent, base: dict | None = None) -> dict[
     """Return weights adapted to query intent."""
     weights = dict(base or DEFAULT_WEIGHTS)
     if intent == QueryIntent.CODE_SYMBOL:
-        weights["exact"] = 0.35
+        # Balanced: keep vector+graph competitive with symbol+entity.
+        weights["exact"] = 0.20
         weights["fuzzy"] = 0.05
-        weights["vector"] = 0.25
-        weights["graph"] = 0.35
+        weights["vector"] = 0.20
+        weights["graph"] = 0.20
+        weights["symbol"] = 0.20
+        weights["entity"] = 0.15
     elif intent == QueryIntent.NATURAL_LANGUAGE:
-        weights["exact"] = 0.10
-        weights["fuzzy"] = 0.10
-        weights["vector"] = 0.70
-        weights["graph"] = 0.10
+        weights["exact"] = 0.08
+        weights["fuzzy"] = 0.07
+        weights["vector"] = 0.55
+        weights["graph"] = 0.15
+        weights["symbol"] = 0.0
+        weights["entity"] = 0.15
     else:
         # MIXED
-        weights["exact"] = 0.25
-        weights["fuzzy"] = 0.10
-        weights["vector"] = 0.45
+        weights["exact"] = 0.15
+        weights["fuzzy"] = 0.07
+        weights["vector"] = 0.38
         weights["graph"] = 0.20
+        weights["symbol"] = 0.05
+        weights["entity"] = 0.15
     return weights
 
 

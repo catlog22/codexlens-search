@@ -22,6 +22,7 @@ class FTSEngine:
         self._migrate_language_column()
         self._create_symbols_table()
         self._create_symbol_refs_table()
+        self._create_entity_edges_table()
 
     def _migrate_line_columns(self) -> None:
         """Add start_line/end_line columns if missing (for pre-existing DBs)."""
@@ -114,6 +115,43 @@ class FTSEngine:
             "ON symbol_refs (from_path)"
         )
         self._conn.commit()
+
+    def _create_entity_edges_table(self) -> None:
+        """Create entity_edges table and indexes if they do not exist."""
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS entity_edges ("
+            "from_entity TEXT NOT NULL, "
+            "to_entity TEXT NOT NULL, "
+            "edge_kind TEXT NOT NULL, "
+            "weight REAL DEFAULT 1.0, "
+            "PRIMARY KEY (from_entity, to_entity, edge_kind))"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_edges_from ON entity_edges (from_entity)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_edges_to ON entity_edges (to_entity)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_edges_kind ON entity_edges (edge_kind)"
+        )
+        self._conn.commit()
+
+    def add_entity_edges(self, edges: list[tuple[str, str, str, float]]) -> None:
+        """Batch-insert entity graph edges in a single transaction.
+
+        Each tuple: (from_entity, to_entity, edge_kind, weight).
+        Uses UPSERT to accumulate weights across repeated edges.
+        """
+        if not edges:
+            return
+        self._conn.executemany(
+            "INSERT INTO entity_edges (from_entity, to_entity, edge_kind, weight) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(from_entity, to_entity, edge_kind) "
+            "DO UPDATE SET weight = weight + excluded.weight",
+            edges,
+        )
 
     # ------------------------------------------------------------------
     # Symbol reference operations
@@ -412,12 +450,22 @@ class FTSEngine:
             self._conn.execute(
                 "DELETE FROM symbol_refs WHERE from_path = ?", (path,)
             )
+            # Clean up outgoing entity edges for this path
+            self._conn.execute(
+                "DELETE FROM entity_edges WHERE from_entity LIKE ?",
+                (f"{path}\t%",),
+            )
             self._conn.commit()
             return 0
         placeholders = ",".join("?" for _ in ids)
         # Delete refs by path
         self._conn.execute(
             "DELETE FROM symbol_refs WHERE from_path = ?", (path,)
+        )
+        # Delete outgoing entity edges by path prefix
+        self._conn.execute(
+            "DELETE FROM entity_edges WHERE from_entity LIKE ?",
+            (f"{path}\t%",),
         )
         # Delete symbols first (no CASCADE in FTS5)
         self._conn.execute(

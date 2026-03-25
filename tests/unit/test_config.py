@@ -28,4 +28,28 @@ def test_custom_instantiation():
 
 def test_fusion_weights_keys():
     cfg = Config()
-    assert set(cfg.fusion_weights.keys()) == {"exact", "fuzzy", "vector", "graph"}
+    assert set(cfg.fusion_weights.keys()) == {"exact", "fuzzy", "vector", "graph", "symbol", "entity"}
+
+
+def test_graph_weight_defaults():
+    cfg = Config()
+    assert cfg.graph_kind_weights["call"] == 1.5
+    assert cfg.graph_kind_weights["inherit"] == 0.9
+    assert cfg.graph_dir_weights["backward"] == 1.3
+
+
+def test_symbol_search_enabled_default():
+    cfg = Config()
+    assert cfg.symbol_search_enabled is True
+
+
+def test_entity_graph_enabled_default():
+    cfg = Config()
+    assert cfg.entity_graph_enabled is True
+
+
+def test_agent_defaults():
+    cfg = Config()
+    assert cfg.agent_enabled is False
+    assert cfg.agent_llm_model == "glm-5-turbo"
+    assert cfg.agent_max_iterations == 5

@@ -28,6 +28,10 @@ htmlcov/
 # Workflow (internal)
 .workflow/
 
+# Environment secrets
+.env
+.env.*
+
 # OS
 .DS_Store
 Thumbs.db

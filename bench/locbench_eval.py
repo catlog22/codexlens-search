@@ -32,6 +32,15 @@ sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from datasets import load_dataset
 
+# Load .env file if present
+_env_file = _PROJECT_ROOT / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, val = line.partition("=")
+            os.environ.setdefault(key.strip(), val.strip())
+
 log = logging.getLogger("locbench_eval")
 
 
@@ -142,7 +151,7 @@ def index_and_search(
         old_cwd = os.getcwd()
         try:
             os.chdir(repo_dir)
-            file_results = loc_agent.run(
+            file_results = loc_agent.run_sync(
                 query,
                 max_iterations=config.agent_max_iterations,
                 top_k=top_k,

@@ -781,18 +781,8 @@ async def locate(
             "The agent needs an indexed codebase to search through."
         )
 
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, _run_locate, project_path, query, top_k, max_iterations,
-    )
-    return result
-
-
-def _run_locate(project_path: str, query: str, top_k: int, max_iterations: int) -> str:
-    """Run CodeLocAgent in executor thread."""
     from codexlens_search.bridge import create_agent
 
-    root = Path(project_path).resolve()
     _, search, config = _get_pipelines(project_path)
 
     config.agent_enabled = True
@@ -807,7 +797,7 @@ def _run_locate(project_path: str, query: str, top_k: int, max_iterations: int) 
     old_cwd = os.getcwd()
     try:
         os.chdir(root)
-        results = agent.run(query, max_iterations=max_iterations, top_k=top_k)
+        results = await agent.run(query, max_iterations=max_iterations, top_k=top_k)
     except Exception as exc:
         log.error("Agent run failed: %s", exc, exc_info=True)
         return f"Error: agent run failed: {exc}"

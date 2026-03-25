@@ -350,7 +350,7 @@ class TestCmdLocate:
         mock_result.chunk_ids = (1, 42)
 
         mock_agent = MagicMock()
-        mock_agent.run.return_value = [mock_result]
+        mock_agent.run_sync.return_value = [mock_result]
 
         mock_search = MagicMock()
         mock_search._entity_graph = MagicMock()

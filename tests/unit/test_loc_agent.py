@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from codexlens_search.agent.loc_agent import (
     CodeLocAgent,
@@ -22,7 +22,7 @@ def test_loc_agent_falls_back_when_disabled() -> None:
     ]
 
     agent = CodeLocAgent(search_pipeline=search, entity_graph=None, config=cfg)
-    out = agent.run("find auth", max_iterations=3, top_k=5)
+    out = agent.run_sync("find auth", max_iterations=3, top_k=5)
 
     assert out and out[0].path == "a.py"
     search.search_files.assert_called_once_with("find auth", top_k=5)
@@ -92,11 +92,11 @@ def test_loc_agent_natural_termination() -> None:
         content="Based on my analysis, the relevant files are:\n1. a.py\n2. b.py"
     )
 
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = [resp1, resp2]
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[resp1, resp2])
 
-    with patch("codexlens_search.agent.loc_agent._create_openai_client", return_value=mock_client):
-        out = agent.run("find auth", max_iterations=5, top_k=2)
+    with patch("codexlens_search.agent.loc_agent._create_async_openai_client", return_value=mock_client):
+        out = agent.run_sync("find auth", max_iterations=5, top_k=2)
 
     # Should extract a.py from search results
     assert len(out) > 0
@@ -149,11 +149,11 @@ def test_loc_agent_max_iterations_force_extract() -> None:
         }
     ])
 
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = [resp_search, resp_search2]
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[resp_search, resp_search2])
 
-    with patch("codexlens_search.agent.loc_agent._create_openai_client", return_value=mock_client):
-        out = agent.run("find login bug", max_iterations=2, top_k=5)
+    with patch("codexlens_search.agent.loc_agent._create_async_openai_client", return_value=mock_client):
+        out = agent.run_sync("find login bug", max_iterations=2, top_k=5)
 
     # Should extract auth/login.py from search results even without natural stop
     assert len(out) > 0
@@ -185,11 +185,11 @@ def test_loc_agent_read_files_batch_tool() -> None:
     ])
     resp2 = _make_openai_response(content="The relevant file is x.py")
 
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = [resp1, resp2]
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[resp1, resp2])
 
-    with patch("codexlens_search.agent.loc_agent._create_openai_client", return_value=mock_client):
-        out = agent.run("find bug", max_iterations=3, top_k=2)
+    with patch("codexlens_search.agent.loc_agent._create_async_openai_client", return_value=mock_client):
+        out = agent.run_sync("find bug", max_iterations=3, top_k=2)
 
     assert len(out) > 0
 

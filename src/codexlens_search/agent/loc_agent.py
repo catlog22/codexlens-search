@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,71 @@ def _create_openai_client(api_key: str, api_base: str) -> Any:
     if api_base:
         kwargs["base_url"] = api_base
     return OpenAI(**kwargs)
+
+
+def _create_async_openai_client(api_key: str, api_base: str) -> Any:
+    """Create an AsyncOpenAI client. Returns None if openai is not installed or no key."""
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        _log.warning("openai package not installed — async agent LLM disabled")
+        return None
+
+    resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    if not resolved_key:
+        _log.warning("No API key for agent LLM (set agent_llm_api_key or OPENAI_API_KEY)")
+        return None
+
+    kwargs: dict[str, Any] = {"api_key": resolved_key}
+    if api_base:
+        kwargs["base_url"] = api_base
+    return AsyncOpenAI(**kwargs)
+
+
+async def _call_openai_async(
+    client: Any,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Call AsyncOpenAI-compatible chat completion with tool use.
+
+    Returns the assistant message dict or None on failure.
+    """
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            timeout=120,
+        )
+    except Exception:
+        _log.warning("Async OpenAI completion failed", exc_info=True)
+        return None
+
+    choice = resp.choices[0] if resp.choices else None
+    if choice is None:
+        return None
+
+    msg = choice.message
+    out: dict[str, Any] = {
+        "role": "assistant",
+        "content": msg.content or "",
+    }
+    if msg.tool_calls:
+        out["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in msg.tool_calls
+        ]
+    return out
 
 
 def _call_openai(
@@ -258,7 +325,8 @@ class CodeLocAgent:
         self._entity_graph = entity_graph
         self._config = config
         self._tool_schemas = get_tool_schemas()
-        self._client: Any = None  # lazy init
+        self._client: Any = None  # lazy sync client
+        self._async_client: Any = None  # lazy async client
 
     def _get_client(self) -> Any | None:
         if self._client is None:
@@ -266,7 +334,131 @@ class CodeLocAgent:
             self._client = _create_openai_client(cfg.agent_llm_api_key, cfg.agent_llm_api_base)
         return self._client
 
-    def run(self, query: str, max_iterations: int = 5, top_k: int = 10) -> list[FileSearchResult]:
+    def _get_async_client(self) -> Any | None:
+        if self._async_client is None:
+            cfg = self._config
+            self._async_client = _create_async_openai_client(cfg.agent_llm_api_key, cfg.agent_llm_api_base)
+        return self._async_client
+
+    def _should_fan_out(self, query: str) -> bool:
+        """Heuristic to determine if a query should be decomposed into sub-queries.
+
+        Returns True for queries with multiple distinct concepts, files, or
+        explicit multi-part indicators (AND/OR, comma-separated items).
+        Conservative to avoid unnecessary decomposition and LLM cost.
+        """
+        if not self._config.agent_fan_out_enabled:
+            return False
+
+        # Check for explicit multi-part indicators
+        lower = query.lower()
+
+        # AND/OR connectors between concepts
+        if re.search(r"\b(?:and|or)\b.*\b(?:and|or)\b", lower):
+            return True
+
+        # Comma-separated list of 3+ items (not inside parentheses)
+        commas = query.count(",")
+        if commas >= 2:
+            return True
+
+        # Multiple file references (e.g., "foo.py and bar.py")
+        file_refs = re.findall(
+            r"[\w./\\-]+\.(?:py|js|ts|jsx|tsx|go|java|cpp|c|h|rs|rb)", query
+        )
+        if len(file_refs) >= 2:
+            return True
+
+        return False
+
+    async def _fan_out(
+        self, query: str, max_iterations: int, top_k: int,
+    ) -> list[FileSearchResult]:
+        """Decompose query into sub-queries, run parallel agents, merge results."""
+        cfg = self._config
+        client = self._get_async_client()
+        if client is None:
+            return await self._run_single(query, max_iterations, top_k)
+
+        # Ask LLM to decompose the query
+        decompose_messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a query decomposition assistant. Split the user's code "
+                    "localization query into 2-4 independent sub-queries, each focusing "
+                    "on a single concept or file. Output ONLY a JSON array of strings. "
+                    "Example: [\"find auth login handler\", \"find session middleware\"]"
+                ),
+            },
+            {"role": "user", "content": query},
+        ]
+        try:
+            resp = await client.chat.completions.create(
+                model=cfg.agent_llm_model,
+                messages=decompose_messages,
+                timeout=30,
+            )
+            raw = (resp.choices[0].message.content or "").strip()
+            # Extract JSON array from response
+            match = re.search(r"\[.*\]", raw, re.DOTALL)
+            if match:
+                sub_queries = json.loads(match.group())
+            else:
+                sub_queries = []
+        except Exception:
+            _log.warning("Fan-out decomposition failed, falling back to single agent", exc_info=True)
+            return await self._run_single(query, max_iterations, top_k)
+
+        if not sub_queries or len(sub_queries) < 2:
+            return await self._run_single(query, max_iterations, top_k)
+
+        # Cap sub-queries
+        max_workers = cfg.agent_fan_out_max_workers
+        sub_queries = sub_queries[:max_workers]
+
+        _log.info("Fan-out: decomposed into %d sub-queries: %s", len(sub_queries), sub_queries)
+
+        # Run sub-agents in parallel
+        tasks = [
+            self._run_single(sq, max_iterations, top_k)
+            for sq in sub_queries
+        ]
+        all_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Merge and deduplicate by file path
+        seen_paths: set[str] = set()
+        merged: list[FileSearchResult] = []
+        for result in all_results:
+            if isinstance(result, Exception):
+                _log.warning("Sub-agent failed: %s", result)
+                continue
+            for r in result:
+                if r.path not in seen_paths:
+                    seen_paths.add(r.path)
+                    merged.append(r)
+
+        # Sort by score descending and cap
+        merged.sort(key=lambda x: x.score, reverse=True)
+        return merged[:top_k]
+
+    async def run(self, query: str, max_iterations: int = 5, top_k: int = 10) -> list[FileSearchResult]:
+        """Run the agent loop asynchronously using AsyncOpenAI.
+
+        Use ``run_sync()`` from synchronous callers (e.g. CLI bridge).
+        When fan-out is enabled and the query contains multiple concepts,
+        decomposes the query and runs parallel sub-agents.
+        """
+        max_iterations = max(1, _safe_int(max_iterations, 5))
+        top_k = max(1, _safe_int(top_k, 10))
+
+        if self._should_fan_out(query):
+            return await self._fan_out(query, max_iterations, top_k)
+
+        return await self._run_single(query, max_iterations, top_k)
+
+    async def _run_single(self, query: str, max_iterations: int = 5, top_k: int = 10) -> list[FileSearchResult]:
+        """Run a single agent loop (no fan-out)."""
         cfg = self._config
         max_iterations = max(1, _safe_int(max_iterations, 5))
         top_k = max(1, _safe_int(top_k, 10))
@@ -275,9 +467,9 @@ class CodeLocAgent:
             _log.debug("Agent disabled, falling back to search_files")
             return self._search.search_files(query, top_k=top_k)
 
-        client = self._get_client()
+        client = self._get_async_client()
         if client is None:
-            _log.warning("No LLM client available, falling back to search_files")
+            _log.warning("No async LLM client available, falling back to search_files")
             return self._search.search_files(query, top_k=top_k)
 
         system_prompt = self._build_system_prompt(top_k=top_k)
@@ -290,7 +482,7 @@ class CodeLocAgent:
             is_last = iteration == max_iterations - 1
             _log.info("Agent iteration %d/%d", iteration + 1, max_iterations)
 
-            assistant_msg = _call_openai(
+            assistant_msg = await _call_openai_async(
                 client, cfg.agent_llm_model, messages, self._tool_schemas,
             )
             if assistant_msg is None:
@@ -308,30 +500,11 @@ class CodeLocAgent:
                     _log.info("Agent stopped naturally (no tool calls): %s", content[:200])
                 return self._build_results_from_history(query, messages, top_k=top_k)
 
-            # Process tool calls
-            extracted_symbols: list[str] = []
-            for tc in tool_calls:
-                tool_call_id = str(tc.get("id") or "")
-                fn = tc.get("function") or {}
-                name = str(fn.get("name") or "")
-                raw_args = fn.get("arguments") or "{}"
-                try:
-                    args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-                except Exception:
-                    args = {}
-
-                _log.info("Agent tool call: %s(%s)", name, json.dumps(args, ensure_ascii=False)[:200])
-
-                result = self._execute_tool(name, args, default_top_k=top_k)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": result,
-                })
-
-                # --- Symbol extraction after file reading ---
-                if name in ("read_files_batch", "get_entity_content"):
-                    extracted_symbols.extend(_extract_symbols_from_text(result))
+            # Process tool calls (parallel-safe tools run concurrently)
+            tool_results, extracted_symbols = self._dispatch_tool_calls(
+                tool_calls, default_top_k=top_k,
+            )
+            messages.extend(tool_results)
 
             # Inject extracted symbols as a hint for the LLM
             if extracted_symbols:
@@ -351,6 +524,13 @@ class CodeLocAgent:
 
         # Should not reach here, but safety fallback
         return self._search.search_files(query, top_k=top_k)
+
+    def run_sync(self, query: str, max_iterations: int = 5, top_k: int = 10) -> list[FileSearchResult]:
+        """Synchronous wrapper around ``run()`` for CLI callers.
+
+        Uses ``asyncio.run()`` to execute the async agent loop.
+        """
+        return asyncio.run(self.run(query, max_iterations=max_iterations, top_k=top_k))
 
     def _build_system_prompt(self, *, top_k: int) -> str:
         return (
@@ -373,9 +553,101 @@ class CodeLocAgent:
             "CRITICAL RULES:\n"
             "- If file_A imports from file_B, BOTH may need changes. Use `list_related_files`.\n"
             "- Do NOT spend multiple iterations reading the same file. Move on to explore.\n"
-            "- After reading code, search for the specific symbols you found, not paraphrases.\n\n"
+            "- After reading code, search for the specific symbols you found, not paraphrases.\n"
+            "- You can call multiple tools in a single response. When you need to "
+            "read multiple files, use separate read_files_batch or get_entity_content "
+            "calls — they execute in parallel.\n\n"
             f"Return at most {top_k} files, ranked by relevance.\n"
         )
+
+    def _execute_tool_call(
+        self, tc: dict[str, Any], default_top_k: int,
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Execute a single tool call and return (tool_result_message, extracted_symbols)."""
+        tool_call_id = str(tc.get("id") or "")
+        fn = tc.get("function") or {}
+        name = str(fn.get("name") or "")
+        raw_args = fn.get("arguments") or "{}"
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+        except Exception:
+            args = {}
+
+        _log.info("Agent tool call: %s(%s)", name, json.dumps(args, ensure_ascii=False)[:200])
+
+        result = self._execute_tool(name, args, default_top_k=default_top_k)
+        msg: dict[str, Any] = {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result,
+        }
+
+        symbols: list[str] = []
+        if name in ("read_files_batch", "get_entity_content"):
+            symbols = _extract_symbols_from_text(result)
+
+        return msg, symbols
+
+    def _dispatch_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        default_top_k: int,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Dispatch tool calls, running allowlisted ones in parallel.
+
+        Returns (ordered_tool_result_messages, all_extracted_symbols).
+        """
+        cfg = self._config
+        concurrency = cfg.agent_tool_concurrency
+        allowlist = set(cfg.agent_parallel_tools_allowlist)
+
+        # Partition into parallel-safe and serial groups, preserving original index
+        parallel_indices: list[int] = []
+        serial_indices: list[int] = []
+        for i, tc in enumerate(tool_calls):
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "")
+            if concurrency > 1 and name in allowlist:
+                parallel_indices.append(i)
+            else:
+                serial_indices.append(i)
+
+        # Pre-allocate result slots
+        results: list[tuple[dict[str, Any], list[str]] | None] = [None] * len(tool_calls)
+
+        # Execute parallel group
+        if parallel_indices and concurrency > 1:
+            workers = min(concurrency, len(parallel_indices))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        self._execute_tool_call, tool_calls[i], default_top_k,
+                    ): i
+                    for i in parallel_indices
+                }
+                for future in futures:
+                    idx = futures[future]
+                    results[idx] = future.result()
+        else:
+            # Fallback: run "parallel" group serially when concurrency=1
+            for i in parallel_indices:
+                results[i] = self._execute_tool_call(tool_calls[i], default_top_k)
+
+        # Execute serial group sequentially
+        for i in serial_indices:
+            results[i] = self._execute_tool_call(tool_calls[i], default_top_k)
+
+        # Merge in original order
+        ordered_msgs: list[dict[str, Any]] = []
+        all_symbols: list[str] = []
+        for r in results:
+            assert r is not None
+            msg, symbols = r
+            ordered_msgs.append(msg)
+            all_symbols.extend(symbols)
+
+        return ordered_msgs, all_symbols
 
     def _execute_tool(self, name: str, args: dict[str, Any], *, default_top_k: int) -> str:
         if name == "search_code":

@@ -80,6 +80,7 @@ class Config:
     reranker_api_key: str = ""
     reranker_api_model: str = ""
     reranker_api_max_tokens_per_batch: int = 2048
+    reranker_api_concurrency: int = 1  # parallel batch scoring (1 = serial)
 
     # Metadata store
     metadata_db_path: str = ""  # empty = no metadata tracking
@@ -132,6 +133,10 @@ class Config:
     agent_llm_api_key: str = ""
     agent_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4/"
     agent_max_iterations: int = 5
+    agent_tool_concurrency: int = 1
+    agent_parallel_tools_allowlist: tuple[str, ...] = ("read_files_batch", "get_entity_content")
+    agent_fan_out_enabled: bool = False
+    agent_fan_out_max_workers: int = 3
 
     _DEFAULT_EXCLUDE_EXTENSIONS: frozenset[str] = frozenset({
         # binaries / images
@@ -181,6 +186,18 @@ class Config:
             object.__setattr__(self, "agent_max_iterations", max(1, int(self.agent_max_iterations)))
         except Exception:
             object.__setattr__(self, "agent_max_iterations", 5)
+        try:
+            object.__setattr__(self, "agent_tool_concurrency", max(1, int(self.agent_tool_concurrency)))
+        except Exception:
+            object.__setattr__(self, "agent_tool_concurrency", 1)
+        try:
+            object.__setattr__(self, "reranker_api_concurrency", max(1, int(self.reranker_api_concurrency)))
+        except Exception:
+            object.__setattr__(self, "reranker_api_concurrency", 1)
+        try:
+            object.__setattr__(self, "agent_fan_out_max_workers", max(1, int(self.agent_fan_out_max_workers)))
+        except Exception:
+            object.__setattr__(self, "agent_fan_out_max_workers", 3)
 
         # Graph weights: allow partial overrides, fill missing keys
         default_kind = {

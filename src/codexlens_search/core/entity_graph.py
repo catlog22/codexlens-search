@@ -68,6 +68,7 @@ class EntityGraph:
         self._chunk_path_cache: dict[int, str] = {}
         self._chunk_symbols_cache: dict[int, list[dict]] = {}
         self._chunks_by_path_cache: dict[str, list[int]] = {}
+        self._cache_lock = threading.Lock()
 
     def add_entity(self, entity_id: EntityId) -> None:
         if self._use_networkx and self._nx is not None:
@@ -292,25 +293,29 @@ class EntityGraph:
         )
 
     def _chunk_path(self, chunk_id: int) -> str:
-        cached = self._chunk_path_cache.get(chunk_id)
-        if cached is not None:
-            return cached
+        with self._cache_lock:
+            cached = self._chunk_path_cache.get(chunk_id)
+            if cached is not None:
+                return cached
         try:
             path = self._fts.get_doc_meta(chunk_id)[0]
         except Exception:
             path = ""
-        self._chunk_path_cache[chunk_id] = path
+        with self._cache_lock:
+            self._chunk_path_cache[chunk_id] = path
         return path
 
     def _chunk_symbols(self, chunk_id: int) -> list[dict]:
-        cached = self._chunk_symbols_cache.get(chunk_id)
-        if cached is not None:
-            return cached
+        with self._cache_lock:
+            cached = self._chunk_symbols_cache.get(chunk_id)
+            if cached is not None:
+                return cached
         try:
             syms = list(self._fts.get_symbols_by_chunk(chunk_id))
         except Exception:
             syms = []
-        self._chunk_symbols_cache[chunk_id] = syms
+        with self._cache_lock:
+            self._chunk_symbols_cache[chunk_id] = syms
         return syms
 
     def _chunks_for_entity(self, ent: EntityId) -> list[int]:
@@ -319,14 +324,16 @@ class EntityGraph:
         return self._chunks_for_symbol_entity(ent)
 
     def _chunks_for_path(self, path: str) -> list[int]:
-        cached = self._chunks_by_path_cache.get(path)
-        if cached is not None:
-            return cached
+        with self._cache_lock:
+            cached = self._chunks_by_path_cache.get(path)
+            if cached is not None:
+                return cached
         try:
             ids = [int(x) for x in self._fts.get_chunk_ids_by_path(path)]
         except Exception:
             ids = []
-        self._chunks_by_path_cache[path] = ids
+        with self._cache_lock:
+            self._chunks_by_path_cache[path] = ids
         return ids
 
     def _chunks_for_symbol_entity(self, ent: EntityId) -> list[int]:

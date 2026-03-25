@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -29,10 +30,24 @@ class APIReranker(BaseReranker):
         max_tokens = self._config.reranker_api_max_tokens_per_batch
         batches = self._split_batches(documents, max_tokens)
         scores = [0.0] * len(documents)
-        for batch in batches:
-            batch_scores = self._call_api_with_retry(query, batch)
-            for orig_idx, score in batch_scores.items():
-                scores[orig_idx] = score
+
+        concurrency = self._config.reranker_api_concurrency
+        if concurrency > 1 and len(batches) > 1:
+            workers = min(concurrency, len(batches))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                batch_results = list(executor.map(
+                    lambda b: self._call_api_with_retry(query, b),
+                    batches,
+                ))
+            for batch_scores in batch_results:
+                for orig_idx, score in batch_scores.items():
+                    scores[orig_idx] = score
+        else:
+            for batch in batches:
+                batch_scores = self._call_api_with_retry(query, batch)
+                for orig_idx, score in batch_scores.items():
+                    scores[orig_idx] = score
+
         return scores
 
     def _split_batches(

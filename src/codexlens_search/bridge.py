@@ -177,6 +177,14 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
         kwargs["agent_llm_api_base"] = os.environ["CODEXLENS_AGENT_LLM_API_BASE"]
     if os.environ.get("CODEXLENS_AGENT_MAX_ITERATIONS"):
         kwargs["agent_max_iterations"] = int(os.environ["CODEXLENS_AGENT_MAX_ITERATIONS"])
+    if os.environ.get("CODEXLENS_AGENT_TOOL_CONCURRENCY"):
+        kwargs["agent_tool_concurrency"] = int(os.environ["CODEXLENS_AGENT_TOOL_CONCURRENCY"])
+    if os.environ.get("CODEXLENS_AGENT_FAN_OUT_ENABLED"):
+        kwargs["agent_fan_out_enabled"] = os.environ["CODEXLENS_AGENT_FAN_OUT_ENABLED"].lower() in ("true", "1", "yes")
+    if os.environ.get("CODEXLENS_AGENT_FAN_OUT_MAX_WORKERS"):
+        kwargs["agent_fan_out_max_workers"] = int(os.environ["CODEXLENS_AGENT_FAN_OUT_MAX_WORKERS"])
+    if os.environ.get("CODEXLENS_RERANKER_API_CONCURRENCY"):
+        kwargs["reranker_api_concurrency"] = int(os.environ["CODEXLENS_RERANKER_API_CONCURRENCY"])
     # Graph weights (allow partial overrides)
     kind_overrides: dict[str, float] = {}
     if os.environ.get("CODEXLENS_GRAPH_IMPORT_WEIGHT"):
@@ -372,6 +380,10 @@ def create_agent(search_pipeline, entity_graph, config: "Config"):
     """Create a CodeLocAgent from pipeline components.
 
     Kept as a separate factory to avoid importing optional LLM deps at import time.
+
+    The returned agent exposes an async interface: use ``await agent.run()``
+    in async contexts (e.g. MCP server) and ``agent.run_sync()`` from
+    synchronous callers (e.g. CLI bridge).
     """
     from codexlens_search.agent.loc_agent import CodeLocAgent
 
@@ -461,7 +473,7 @@ def cmd_locate(args: argparse.Namespace) -> None:
 
     entity_graph = getattr(search, "_entity_graph", None)
     agent = create_agent(search, entity_graph, config)
-    results = agent.run(args.query, max_iterations=max_iters, top_k=args.top_k)
+    results = agent.run_sync(args.query, max_iterations=max_iters, top_k=args.top_k)
 
     _json_output(
         [

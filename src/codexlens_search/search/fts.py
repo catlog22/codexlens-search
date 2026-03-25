@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 
 class FTSEngine:
     def __init__(self, db_path: str | Path) -> None:
+        self._db_path = str(db_path)
+        self._local = threading.local()
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute(
@@ -23,31 +26,53 @@ class FTSEngine:
         self._create_symbols_table()
         self._create_symbol_refs_table()
         self._create_entity_edges_table()
+        # Mark the primary connection for the creating thread
+        self._local.conn = self._conn
+        self._read_conns: list[sqlite3.Connection] = []
+        self._read_conns_lock = threading.Lock()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Get a thread-local SQLite connection for read operations.
+
+        The creating thread reuses the primary connection. Worker threads
+        get their own connection to avoid SQLite concurrent access errors.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode = WAL")
+        self._local.conn = conn
+        with self._read_conns_lock:
+            self._read_conns.append(conn)
+        return conn
 
     def _migrate_line_columns(self) -> None:
         """Add start_line/end_line columns if missing (for pre-existing DBs)."""
+        conn = self._conn
         cols = {
             row[1]
-            for row in self._conn.execute("PRAGMA table_info(docs_meta)").fetchall()
+            for row in conn.execute("PRAGMA table_info(docs_meta)").fetchall()
         }
         for col in ("start_line", "end_line"):
             if col not in cols:
-                self._conn.execute(
+                conn.execute(
                     f"ALTER TABLE docs_meta ADD COLUMN {col} INTEGER DEFAULT 0"
                 )
-        self._conn.commit()
+        conn.commit()
 
     def _migrate_language_column(self) -> None:
         """Add language column if missing (for pre-existing DBs)."""
+        conn = self._conn
         cols = {
             row[1]
-            for row in self._conn.execute("PRAGMA table_info(docs_meta)").fetchall()
+            for row in conn.execute("PRAGMA table_info(docs_meta)").fetchall()
         }
         if "language" not in cols:
-            self._conn.execute(
+            conn.execute(
                 "ALTER TABLE docs_meta ADD COLUMN language TEXT DEFAULT ''"
             )
-            self._conn.commit()
+            conn.commit()
 
     def _create_symbols_table(self) -> None:
         """Create symbols table and indexes if they do not exist."""
@@ -214,7 +239,8 @@ class FTSEngine:
         Returns list of dicts with keys: id, from_symbol_id, from_name,
         from_path, to_name, to_symbol_id, ref_kind, line.
         """
-        rows = self._conn.execute(
+        conn = self._get_conn()
+        rows = conn.execute(
             "SELECT id, from_symbol_id, from_name, from_path, "
             "to_name, to_symbol_id, ref_kind, line "
             "FROM symbol_refs WHERE from_name = ?",
@@ -232,7 +258,8 @@ class FTSEngine:
         Returns list of dicts with keys: id, from_symbol_id, from_name,
         from_path, to_name, to_symbol_id, ref_kind, line.
         """
-        rows = self._conn.execute(
+        conn = self._get_conn()
+        rows = conn.execute(
             "SELECT id, from_symbol_id, from_name, from_path, "
             "to_name, to_symbol_id, ref_kind, line "
             "FROM symbol_refs WHERE to_name = ?",
@@ -274,15 +301,16 @@ class FTSEngine:
         Returns list of dicts with keys: id, chunk_id, name, kind,
         start_line, end_line, parent_name, signature, language.
         """
+        conn = self._get_conn()
         if kind is not None:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT id, chunk_id, name, kind, start_line, end_line, "
                 "parent_name, signature, language "
                 "FROM symbols WHERE name = ? AND kind = ?",
                 (name, kind),
             ).fetchall()
         else:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT id, chunk_id, name, kind, start_line, end_line, "
                 "parent_name, signature, language "
                 "FROM symbols WHERE name = ?",
@@ -296,7 +324,8 @@ class FTSEngine:
 
     def get_symbols_by_chunk(self, chunk_id: int) -> list[dict]:
         """Return all symbols associated with a given chunk_id."""
-        rows = self._conn.execute(
+        conn = self._get_conn()
+        rows = conn.execute(
             "SELECT id, chunk_id, name, kind, start_line, end_line, "
             "parent_name, signature, language "
             "FROM symbols WHERE chunk_id = ?",
@@ -355,11 +384,13 @@ class FTSEngine:
             "INSERT OR REPLACE INTO docs (rowid, content) VALUES (?, ?)",
             fts_rows,
         )
+        self._conn.commit()
 
     def exact_search(self, query: str, top_k: int = 50) -> list[tuple[int, float]]:
         """FTS5 MATCH query, return (id, bm25_score) sorted by score descending."""
+        conn = self._get_conn()
         try:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT rowid, bm25(docs) AS score FROM docs "
                 "WHERE docs MATCH ? ORDER BY score LIMIT ?",
                 (query, top_k),
@@ -376,8 +407,9 @@ class FTSEngine:
         if not tokens:
             return []
         prefix_query = " ".join(t + "*" for t in tokens)
+        conn = self._get_conn()
         try:
-            rows = self._conn.execute(
+            rows = conn.execute(
                 "SELECT rowid, bm25(docs) AS score FROM docs "
                 "WHERE docs MATCH ? ORDER BY score LIMIT ?",
                 (prefix_query, top_k),
@@ -388,19 +420,22 @@ class FTSEngine:
 
     def get_content(self, doc_id: int) -> str:
         """Retrieve content for a doc_id."""
-        row = self._conn.execute(
+        conn = self._get_conn()
+        row = conn.execute(
             "SELECT content FROM docs WHERE rowid = ?", (doc_id,)
         ).fetchone()
         return row[0] if row else ""
 
     def get_all_chunk_ids(self) -> set[int]:
         """Return all doc IDs in the FTS index."""
-        rows = self._conn.execute("SELECT id FROM docs_meta").fetchall()
+        conn = self._get_conn()
+        rows = conn.execute("SELECT id FROM docs_meta").fetchall()
         return {r[0] for r in rows}
 
     def get_chunk_ids_by_path(self, path: str) -> list[int]:
         """Return all doc IDs associated with a given file path."""
-        rows = self._conn.execute(
+        conn = self._get_conn()
+        rows = conn.execute(
             "SELECT id FROM docs_meta WHERE path = ?", (path,)
         ).fetchall()
         return [r[0] for r in rows]
@@ -485,8 +520,18 @@ class FTSEngine:
         self._conn.commit()
 
     def close(self) -> None:
-        """Close the underlying SQLite connection."""
-        self._conn.close()
+        """Close all SQLite connections (primary + worker thread connections)."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        with self._read_conns_lock:
+            for conn in self._read_conns:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._read_conns.clear()
 
     def __enter__(self) -> "FTSEngine":
         return self
@@ -496,13 +541,14 @@ class FTSEngine:
 
     def __del__(self) -> None:
         try:
-            self._conn.close()
+            self.close()
         except Exception:
             pass
 
     def get_doc_meta(self, doc_id: int) -> tuple[str, int, int, str]:
         """Return (path, start_line, end_line, language) for a doc_id."""
-        row = self._conn.execute(
+        conn = self._get_conn()
+        row = conn.execute(
             "SELECT path, start_line, end_line, language FROM docs_meta WHERE id = ?",
             (doc_id,),
         ).fetchone()

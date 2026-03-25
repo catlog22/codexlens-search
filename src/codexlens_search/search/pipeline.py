@@ -309,11 +309,21 @@ class SearchPipeline:
 
     # -- Quality-routed search methods ------------------------------------
 
+    def _consume_prefetched_fts(
+        self, query: str,
+        prefetched_fts: tuple[list[tuple[int, float]], list[tuple[int, float]]] | None = None,
+    ) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+        """Return prefetched FTS results if available, otherwise run FTS search."""
+        if prefetched_fts is not None:
+            return prefetched_fts
+        return self._fts_search(query)
+
     def _search_fast(
-        self, query: str, final_top_k: int
+        self, query: str, final_top_k: int,
+        prefetched_fts: tuple[list[tuple[int, float]], list[tuple[int, float]]] | None = None,
     ) -> list[SearchResult]:
         """FTS-only search with reranking. No embedding needed."""
-        exact_results, fuzzy_results = self._fts_search(query)
+        exact_results, fuzzy_results = self._consume_prefetched_fts(query, prefetched_fts=prefetched_fts)
 
         fusion_input: dict[str, list[tuple[int, float]]] = {}
         if exact_results:
@@ -332,7 +342,9 @@ class SearchPipeline:
         return self._rerank_and_build(query, fused, final_top_k, use_reranker=True)
 
     def _search_balanced(
-        self, query: str, final_top_k: int, *, intent: QueryIntent | None = None
+        self, query: str, final_top_k: int, *,
+        intent: QueryIntent | None = None,
+        prefetched_fts: tuple[list[tuple[int, float]], list[tuple[int, float]]] | None = None,
     ) -> list[SearchResult]:
         """FTS + binary coarse search with RRF fusion and reranking.
 
@@ -344,25 +356,32 @@ class SearchPipeline:
 
         query_vec = self._embedder.embed_single(query)
 
-        # Parallel: binary coarse + FTS
+        # Parallel: binary coarse + FTS (use prefetched FTS if available)
         coarse_results: list[tuple[int, float]] = []
         exact_results: list[tuple[int, float]] = []
         fuzzy_results: list[tuple[int, float]] = []
         symbol_results: list[tuple[int, float]] = []
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            coarse_future = pool.submit(self._binary_coarse_search, query_vec)
-            fts_future = pool.submit(self._fts_search, query)
-
+        if prefetched_fts is not None:
+            exact_results, fuzzy_results = prefetched_fts
             try:
-                coarse_results = coarse_future.result()
+                coarse_results = self._binary_coarse_search(query_vec)
             except Exception:
                 _log.warning("Binary coarse search failed", exc_info=True)
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                coarse_future = pool.submit(self._binary_coarse_search, query_vec)
+                fts_future = pool.submit(self._fts_search, query)
 
-            try:
-                exact_results, fuzzy_results = fts_future.result()
-            except Exception:
-                _log.warning("FTS search failed", exc_info=True)
+                try:
+                    coarse_results = coarse_future.result()
+                except Exception:
+                    _log.warning("Binary coarse search failed", exc_info=True)
+
+                try:
+                    exact_results, fuzzy_results = fts_future.result()
+                except Exception:
+                    _log.warning("FTS search failed", exc_info=True)
 
         if cfg.symbol_search_enabled and intent == QueryIntent.CODE_SYMBOL:
             try:
@@ -427,7 +446,9 @@ class SearchPipeline:
         return self._rerank_and_build(query, fused, final_top_k, use_reranker=True)
 
     def _search_thorough(
-        self, query: str, final_top_k: int, *, intent: QueryIntent | None = None
+        self, query: str, final_top_k: int, *,
+        intent: QueryIntent | None = None,
+        prefetched_fts: tuple[list[tuple[int, float]], list[tuple[int, float]]] | None = None,
     ) -> list[SearchResult]:
         """Full 2-stage vector + FTS + reranking pipeline (original behavior)."""
         cfg = self._config
@@ -437,25 +458,32 @@ class SearchPipeline:
 
         query_vec = self._embedder.embed_single(query)
 
-        # Parallel vector + FTS search
+        # Parallel vector + FTS search (use prefetched FTS if available)
         vector_results: list[tuple[int, float]] = []
         exact_results: list[tuple[int, float]] = []
         fuzzy_results: list[tuple[int, float]] = []
         symbol_results: list[tuple[int, float]] = []
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            vec_future = pool.submit(self._vector_search, query_vec)
-            fts_future = pool.submit(self._fts_search, query)
-
+        if prefetched_fts is not None:
+            exact_results, fuzzy_results = prefetched_fts
             try:
-                vector_results = vec_future.result()
+                vector_results = self._vector_search(query_vec)
             except Exception:
                 _log.warning("Vector search failed, using empty results", exc_info=True)
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                vec_future = pool.submit(self._vector_search, query_vec)
+                fts_future = pool.submit(self._fts_search, query)
 
-            try:
-                exact_results, fuzzy_results = fts_future.result()
-            except Exception:
-                _log.warning("FTS search failed, using empty results", exc_info=True)
+                try:
+                    vector_results = vec_future.result()
+                except Exception:
+                    _log.warning("Vector search failed, using empty results", exc_info=True)
+
+                try:
+                    exact_results, fuzzy_results = fts_future.result()
+                except Exception:
+                    _log.warning("FTS search failed, using empty results", exc_info=True)
 
         if cfg.symbol_search_enabled and intent == QueryIntent.CODE_SYMBOL:
             try:
@@ -549,32 +577,41 @@ class SearchPipeline:
         final_top_k = top_k if top_k is not None else cfg.reranker_top_k
         raw_intent = detect_query_intent(query)
 
-        # Query expansion: inject code tokens for natural language queries
-        if self._query_expander is not None and cfg.expansion_enabled:
-            try:
-                query = self._query_expander.expand(query)
-            except Exception:
-                _log.warning("Query expansion failed", exc_info=True)
+        # Query expansion: run concurrently with initial FTS search when possible
+        expansion_enabled = (
+            self._query_expander is not None and cfg.expansion_enabled
+        )
 
-        # Resolve quality tier
+        # Resolve quality tier early to know if we need FTS pre-search
         effective_quality = quality or cfg.default_search_quality
         if effective_quality not in _VALID_QUALITIES:
-            _log.warning(
-                "Invalid search quality '%s', falling back to 'auto'",
-                effective_quality,
-            )
             effective_quality = "auto"
-
-        # Auto-detect: use thorough if vector index has data, else fast
         if effective_quality == "auto":
             effective_quality = "thorough" if self._has_vector_index() else "fast"
 
+        # Parallel expansion + FTS pre-warm: run expansion concurrently with
+        # an initial FTS search so expansion latency is hidden behind FTS I/O.
+        prefetched_fts = None
+        if expansion_enabled:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                expand_future = pool.submit(self._query_expander.expand, query)
+                # Pre-warm FTS results that will be used by the quality-routed search
+                fts_prefetch_future = pool.submit(self._fts_search, query)
+                try:
+                    query = expand_future.result()
+                except Exception:
+                    _log.warning("Query expansion failed", exc_info=True)
+                try:
+                    prefetched_fts = fts_prefetch_future.result()
+                except Exception:
+                    _log.warning("FTS prefetch failed", exc_info=True)
+
         if effective_quality == "fast":
-            results = self._search_fast(query, final_top_k)
+            results = self._search_fast(query, final_top_k, prefetched_fts=prefetched_fts)
         elif effective_quality == "balanced":
-            results = self._search_balanced(query, final_top_k, intent=raw_intent)
+            results = self._search_balanced(query, final_top_k, intent=raw_intent, prefetched_fts=prefetched_fts)
         else:
-            results = self._search_thorough(query, final_top_k, intent=raw_intent)
+            results = self._search_thorough(query, final_top_k, intent=raw_intent, prefetched_fts=prefetched_fts)
 
         self._record_access(results)
         return results

@@ -448,8 +448,8 @@ def main():
                         help="Use SearchPipeline.search_files() for file-level aggregation")
     parser.add_argument("--agent", action="store_true",
                         help="Use LLM agent loop (requires optional deps + API key)")
-    parser.add_argument("--mode", choices=["agent", "graph_enhanced", "hybrid"], default="agent",
-                        help="Agent mode: 'agent', 'graph_enhanced', or 'hybrid'")
+    parser.add_argument("--mode", choices=["agent", "graph_enhanced", "hybrid", "llm_expand"], default="agent",
+                        help="Agent mode: 'agent', 'graph_enhanced', 'hybrid', or 'llm_expand'")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-processed instances")
     parser.add_argument("--eval-only", action="store_true",

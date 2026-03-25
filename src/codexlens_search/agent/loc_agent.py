@@ -454,6 +454,7 @@ class CodeLocAgent:
         - ``"agent"`` (default): original iterative agent loop
         - ``"graph_enhanced"``: pipeline + agent in parallel, agent enriches graph
         - ``"hybrid"``: full agent loop with graph enhancement + pipeline reranking
+        - ``"llm_expand"``: single LLM call for query expansion, then pipeline search
         """
         max_iterations = max(1, _safe_int(max_iterations, 5))
         top_k = max(1, _safe_int(top_k, 10))
@@ -465,6 +466,9 @@ class CodeLocAgent:
 
         if mode == "hybrid":
             return await self._run_hybrid(query, max_iterations, top_k)
+
+        if mode == "llm_expand":
+            return await self._run_llm_expand(query, top_k)
 
         # Original agent mode
         if self._should_fan_out(query):
@@ -846,12 +850,17 @@ class CodeLocAgent:
         with graph enhancement (agent reports relationships) and pipeline
         reranking (proper scoring via reranker/FTS/fusion).
 
+        Optimizations vs naive sequential:
+        - Pipeline search runs in parallel with agent loop (saves ~4s)
+        - Uses standard tool schemas (no report_relationship) to reduce LLM
+          token overhead; edges extracted automatically from conversation
+        - Agent limited to max_iterations (default 5) with natural termination
+
         Flow:
-        1. Run full agent loop with graph-enhanced tools (includes report_relationship)
-        2. Collect agent-discovered files AND edges from conversation
+        1. Launch pipeline search + agent loop in parallel
+        2. Collect agent-discovered files AND auto-extract edges from conversation
         3. Inject edges into entity graph
-        4. Merge agent-discovered files with pipeline search results
-        5. Use pipeline reranker for final scoring
+        4. Merge agent-discovered files with pipeline results (agent order + pipeline scores)
         """
         cfg = self._config
 
@@ -860,10 +869,80 @@ class CodeLocAgent:
             _log.warning("No async LLM client, falling back to pipeline search")
             return self._search.search_files(query, top_k=top_k)
 
-        # Phase 1: Run the full agent loop with graph-enhanced tool schemas
-        # (same as _run_single but with report_relationship tool available)
-        self._discovered_edges = []
-        tool_schemas = get_graph_enhanced_tool_schemas()
+        # Phase 1: Pipeline search + Agent loop in PARALLEL
+        pipeline_task = asyncio.to_thread(
+            self._search.search_files, query, top_k=max(top_k * 3, 30),
+        )
+        agent_task = self._run_hybrid_agent_loop(
+            query, max_iterations, top_k, client,
+        )
+
+        pipeline_results, agent_result = await asyncio.gather(
+            pipeline_task, agent_task, return_exceptions=True,
+        )
+
+        # Handle errors gracefully
+        if isinstance(pipeline_results, Exception):
+            _log.warning("Pipeline search failed: %s", pipeline_results)
+            pipeline_results = []
+        if isinstance(agent_result, Exception):
+            _log.warning("Agent loop failed: %s", agent_result)
+            agent_result = ([], [])
+
+        agent_discovered, edges = agent_result
+
+        # Phase 2: Inject edges into entity graph
+        if edges:
+            injected = self._inject_edges_to_graph(edges)
+            _log.info("Hybrid: injected %d edges into graph", injected)
+
+        pipeline_by_path = {r.path: r for r in pipeline_results}
+
+        # Phase 3: Merge agent-discovered files with pipeline results
+        # Agent files preserve their discovery order (reflecting iterative refinement).
+        # Pipeline provides proper scores via reranker.
+        out: list[FileSearchResult] = []
+        used: set[str] = set()
+
+        for p in agent_discovered:
+            if len(out) >= top_k:
+                break
+            if p in used:
+                continue
+            used.add(p)
+            if p in pipeline_by_path:
+                out.append(pipeline_by_path[p])
+            else:
+                out.append(FileSearchResult(
+                    path=str(p), score=0.0, best_chunk_id=0,
+                    snippet="", line=0, end_line=0, content="", language="",
+                    chunk_ids=(),
+                ))
+
+        # Fill remaining slots from pipeline (sorted by score)
+        for r in pipeline_results:
+            if len(out) >= top_k:
+                break
+            if r.path not in used:
+                used.add(r.path)
+                out.append(r)
+
+        _log.info(
+            "Hybrid result: agent_discovered=%d, edges=%d, pipeline=%d, final=%d",
+            len(agent_discovered), len(edges), len(pipeline_results), len(out),
+        )
+        return out
+
+    async def _run_hybrid_agent_loop(
+        self, query: str, max_iterations: int, top_k: int, client: Any,
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Agent loop for hybrid mode. Returns (discovered_files, edges).
+
+        Uses standard tool schemas (no report_relationship) to minimize LLM
+        token overhead. Edges are auto-extracted from conversation history.
+        """
+        cfg = self._config
+        tool_schemas = get_tool_schemas()
         system_prompt = self._build_system_prompt(top_k=top_k)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -878,7 +957,7 @@ class CodeLocAgent:
                 client, cfg.agent_llm_model, messages, tool_schemas,
             )
             if assistant_msg is None:
-                _log.warning("LLM call failed at iteration %d, falling back", iteration + 1)
+                _log.warning("LLM call failed at iteration %d", iteration + 1)
                 break
 
             messages.append(assistant_msg)
@@ -906,64 +985,136 @@ class CodeLocAgent:
             if is_last:
                 _log.info("Hybrid agent reached max iterations")
 
-        # Phase 2: Collect agent-discovered files from conversation history
+        # Extract discovered files from conversation
         agent_files = _extract_paths_from_search_results(messages)
         text_files = _extract_file_paths_from_messages(messages)
         seen: set[str] = set()
-        agent_discovered: list[str] = []
+        discovered: list[str] = []
         for p in agent_files + text_files:
             if p not in seen:
                 seen.add(p)
-                agent_discovered.append(p)
+                discovered.append(p)
 
-        # Phase 3: Collect edges (explicit report_relationship + fallback extraction)
-        edges = list(self._discovered_edges)
-        self._discovered_edges = []
-        if not edges:
-            edges = self._extract_edges_from_messages(messages)
+        # Auto-extract edges from conversation (imports + co-occurrence)
+        edges = self._extract_edges_from_messages(messages)
 
-        # Phase 4: Inject edges into entity graph
-        if edges:
-            injected = self._inject_edges_to_graph(edges)
-            _log.info("Hybrid: injected %d edges into graph", injected)
+        return discovered, edges
 
-        # Phase 5: Pipeline search (with enriched graph)
-        pipeline_results = self._search.search_files(query, top_k=max(top_k * 3, 30))
-        pipeline_by_path = {r.path: r for r in pipeline_results}
+    async def _run_llm_expand(
+        self, query: str, top_k: int,
+    ) -> list[FileSearchResult]:
+        """LLM-expand mode: single LLM call to extract search terms, then pipeline.
 
-        # Phase 6: Merge agent-discovered files with pipeline results
-        # Agent files preserve their discovery order (reflecting iterative refinement).
-        # Pipeline provides proper scores via reranker.
-        out: list[FileSearchResult] = []
-        used: set[str] = set()
+        Uses the LLM to extract key symbols, function names, error messages,
+        and related concepts from the query. Runs multiple pipeline searches
+        with both original and expanded queries, then merges results.
 
-        for p in agent_discovered:
-            if len(out) >= top_k:
-                break
-            if p in used:
-                continue
-            used.add(p)
-            if p in pipeline_by_path:
-                out.append(pipeline_by_path[p])
+        Much faster than full agent loop (~8-10s vs ~50-100s) while
+        capturing LLM's understanding of code concepts.
+        """
+        cfg = self._config
+        client = self._get_async_client()
+        if client is None:
+            _log.warning("No async LLM client, falling back to pipeline search")
+            return self._search.search_files(query, top_k=top_k)
+
+        # Phase 1: LLM extracts search terms (single call, no tools)
+        extract_prompt = (
+            "You are a code search query optimizer. Given a bug report or feature request, "
+            "extract the most important search terms for finding relevant source files.\n\n"
+            "Output a JSON object with these fields:\n"
+            "- `symbols`: list of specific function/class/variable names mentioned or implied\n"
+            "- `concepts`: list of 2-4 word technical concept phrases (e.g., 'antimeridian wrapping', 'face centroid calculation')\n"
+            "- `error_terms`: any error messages, exception names, or diagnostic strings\n"
+            "- `sub_queries`: 2-3 alternative search queries that approach the problem from different angles\n\n"
+            "Be specific. Extract EXACT symbol names from the text. "
+            "For sub_queries, think about what code structures would need to change.\n"
+            "Output ONLY valid JSON, no markdown."
+        )
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": extract_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        try:
+            resp = await _call_openai_async(client, cfg.agent_llm_model, messages, [])
+            raw = (resp or {}).get("content", "") or ""
+            # Extract JSON from response
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if match:
+                extracted = json.loads(match.group())
             else:
-                # Agent found a file pipeline missed — include with score 0
-                out.append(FileSearchResult(
-                    path=str(p), score=0.0, best_chunk_id=0,
-                    snippet="", line=0, end_line=0, content="", language="",
-                    chunk_ids=(),
-                ))
+                extracted = {}
+        except Exception:
+            _log.warning("LLM expansion failed, falling back to pipeline", exc_info=True)
+            return self._search.search_files(query, top_k=top_k)
 
-        # Fill remaining slots from pipeline (sorted by score)
-        for r in pipeline_results:
-            if len(out) >= top_k:
-                break
-            if r.path not in used:
-                used.add(r.path)
-                out.append(r)
+        symbols = extracted.get("symbols", [])
+        concepts = extracted.get("concepts", [])
+        error_terms = extracted.get("error_terms", [])
+        sub_queries = extracted.get("sub_queries", [])
 
         _log.info(
-            "Hybrid result: agent_discovered=%d, edges=%d, pipeline=%d, final=%d",
-            len(agent_discovered), len(edges), len(pipeline_results), len(out),
+            "LLM expansion: symbols=%s, concepts=%s, sub_queries=%s",
+            symbols, concepts, sub_queries,
+        )
+
+        # Phase 2: Run multiple searches in parallel
+        # - Original query (baseline)
+        # - Symbol-augmented query
+        # - Each sub-query
+        search_queries: list[str] = [query]
+
+        # Build symbol-augmented query
+        extra_terms = symbols + error_terms
+        if extra_terms:
+            augmented = f"{query} {' '.join(extra_terms[:10])}"
+            search_queries.append(augmented)
+
+        # Add concept-focused queries
+        for concept in concepts[:3]:
+            search_queries.append(concept)
+
+        # Add sub-queries from LLM
+        for sq in sub_queries[:3]:
+            if sq not in search_queries:
+                search_queries.append(sq)
+
+        # Run searches sequentially (search_files uses internal thread pools
+        # for query expansion, so nesting ThreadPoolExecutors causes deadlock)
+        search_tasks: list[tuple[str, list[FileSearchResult]]] = []
+        for sq in search_queries:
+            try:
+                results = self._search.search_files(sq, top_k=top_k * 2)
+                search_tasks.append((sq, results))
+            except Exception:
+                _log.warning("Search failed for sub-query: %s", sq[:100], exc_info=True)
+
+        # Phase 3: Merge results with reciprocal rank fusion
+        # Each search perspective contributes a ranked list.
+        file_scores: dict[str, float] = {}
+        file_objs: dict[str, FileSearchResult] = {}
+        rrf_k = 60  # standard RRF constant
+
+        for _sq, results in search_tasks:
+            for rank, r in enumerate(results):
+                rrf_score = 1.0 / (rrf_k + rank + 1)
+                file_scores[r.path] = file_scores.get(r.path, 0.0) + rrf_score
+                # Keep the FileSearchResult with highest original score
+                if r.path not in file_objs or r.score > file_objs[r.path].score:
+                    file_objs[r.path] = r
+
+        # Sort by RRF score
+        ranked = sorted(file_scores.items(), key=lambda x: x[1], reverse=True)
+
+        out: list[FileSearchResult] = []
+        for path, _score in ranked[:top_k]:
+            out.append(file_objs[path])
+
+        _log.info(
+            "LLM-expand: %d queries, %d unique files, returning %d",
+            len(search_queries), len(file_scores), len(out),
         )
         return out
 

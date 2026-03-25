@@ -160,6 +160,44 @@ LIST_RELATED_FILES_TOOL: ToolSchema = {
 }
 
 
+REPORT_RELATIONSHIP_TOOL: ToolSchema = {
+    "type": "function",
+    "function": {
+        "name": "report_relationship",
+        "description": (
+            "Report a discovered relationship between code entities. "
+            "Call this when you find that file A depends on, calls, imports, or "
+            "must be changed together with file B. Each relationship strengthens "
+            "the search graph and improves file ranking."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "from_file": {"type": "string", "description": "Source file path"},
+                "to_file": {"type": "string", "description": "Target file path"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["import", "call", "inherit", "co_change", "semantic"],
+                    "description": (
+                        "Relationship type: import (A imports B), call (A calls B), "
+                        "inherit (A extends B), co_change (A and B must change together), "
+                        "semantic (semantically related)"
+                    ),
+                },
+                "confidence": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 1.0,
+                    "default": 0.8,
+                    "description": "Confidence level 0.1-1.0",
+                },
+            },
+            "required": ["from_file", "to_file", "kind"],
+        },
+    },
+}
+
+
 TOOL_SCHEMAS: list[ToolSchema] = [
     SEARCH_CODE_TOOL,
     TRAVERSE_GRAPH_TOOL,
@@ -168,6 +206,18 @@ TOOL_SCHEMAS: list[ToolSchema] = [
     LIST_RELATED_FILES_TOOL,
 ]
 
+GRAPH_ENHANCED_TOOL_SCHEMAS: list[ToolSchema] = [
+    SEARCH_CODE_TOOL,
+    REPORT_RELATIONSHIP_TOOL,
+    GET_ENTITY_CONTENT_TOOL,
+    READ_FILES_BATCH_TOOL,
+    LIST_RELATED_FILES_TOOL,
+]
+
 
 def get_tool_schemas() -> list[ToolSchema]:
     return list(TOOL_SCHEMAS)
+
+
+def get_graph_enhanced_tool_schemas() -> list[ToolSchema]:
+    return list(GRAPH_ENHANCED_TOOL_SCHEMAS)

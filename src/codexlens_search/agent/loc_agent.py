@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from codexlens_search.agent.tools import get_tool_schemas
+from codexlens_search.agent.tools import get_tool_schemas, get_graph_enhanced_tool_schemas
 from codexlens_search.config import Config
 from codexlens_search.core.entity import EntityId, EntityKind
 from codexlens_search.core.entity_graph import EntityGraph
@@ -327,6 +327,7 @@ class CodeLocAgent:
         self._tool_schemas = get_tool_schemas()
         self._client: Any = None  # lazy sync client
         self._async_client: Any = None  # lazy async client
+        self._discovered_edges: list[dict[str, Any]] = []
 
     def _get_client(self) -> Any | None:
         if self._client is None:
@@ -448,10 +449,24 @@ class CodeLocAgent:
         Use ``run_sync()`` from synchronous callers (e.g. CLI bridge).
         When fan-out is enabled and the query contains multiple concepts,
         decomposes the query and runs parallel sub-agents.
+
+        Supports three modes (via ``config.agent_mode``):
+        - ``"agent"`` (default): original iterative agent loop
+        - ``"graph_enhanced"``: pipeline + agent in parallel, agent enriches graph
+        - ``"hybrid"``: full agent loop with graph enhancement + pipeline reranking
         """
         max_iterations = max(1, _safe_int(max_iterations, 5))
         top_k = max(1, _safe_int(top_k, 10))
 
+        mode = self._config.agent_mode
+
+        if mode == "graph_enhanced":
+            return await self._run_graph_enhanced(query, max_iterations, top_k)
+
+        if mode == "hybrid":
+            return await self._run_hybrid(query, max_iterations, top_k)
+
+        # Original agent mode
         if self._should_fan_out(query):
             return await self._fan_out(query, max_iterations, top_k)
 
@@ -559,6 +574,398 @@ class CodeLocAgent:
             "calls — they execute in parallel.\n\n"
             f"Return at most {top_k} files, ranked by relevance.\n"
         )
+
+    # -----------------------------------------------------------------------
+    # Graph-enhanced mode
+    # -----------------------------------------------------------------------
+
+    def _build_analysis_system_prompt(self) -> str:
+        return (
+            "You are a code relationship analysis agent. Your goal is NOT to list files -- "
+            "a separate search pipeline handles retrieval and ranking.\n\n"
+            "Your job is to DISCOVER HIDDEN RELATIONSHIPS between code entities that "
+            "static analysis might miss. Focus on:\n\n"
+            "**Step 1 - Initial Search**: Use `search_code` to find entry points related to the query.\n\n"
+            "**Step 2 - Read & Analyze**: Use `read_files_batch` to understand the code deeply.\n\n"
+            "**Step 3 - Report Relationships**: For EVERY relationship you discover, call "
+            "`report_relationship`. Types:\n"
+            "  - `import`: A imports/uses B\n"
+            "  - `call`: A calls functions in B\n"
+            "  - `inherit`: A extends/implements B\n"
+            "  - `co_change`: A and B must be modified together (e.g., interface + implementation)\n"
+            "  - `semantic`: semantically related (e.g., both handle auth)\n\n"
+            "**Step 4 - Follow Chains**: Use `list_related_files` to explore dependency chains. "
+            "Report each discovered link with `report_relationship`.\n\n"
+            "CRITICAL RULES:\n"
+            "- Call `report_relationship` for EVERY pair of related files you find\n"
+            "- Higher confidence (0.9-1.0) for direct imports/calls you verified in code\n"
+            "- Lower confidence (0.5-0.7) for semantic/co_change relationships\n"
+            "- Aim for 5-15 relationships per query\n"
+            "- When done analyzing, stop calling tools\n"
+        )
+
+    def _inject_edges_to_graph(self, edges: list[dict[str, Any]]) -> int:
+        """Inject agent-discovered edges into the entity graph. Returns count of edges added."""
+        if not self._entity_graph or not edges:
+            return 0
+
+        from codexlens_search.core.entity_graph import _entity_for_file
+
+        added = 0
+        for edge in edges:
+            from_file = edge.get("from_file", "")
+            to_file = edge.get("to_file", "")
+            kind = edge.get("kind", "semantic")
+            confidence = float(edge.get("confidence", 0.8))
+            if not from_file or not to_file:
+                continue
+            from_ent = _entity_for_file(from_file)
+            to_ent = _entity_for_file(to_file)
+            self._entity_graph.add_edge(from_ent, to_ent, kind, weight=confidence)
+            added += 1
+
+        _log.info("Injected %d agent-discovered edges into entity graph", added)
+        return added
+
+    def _extract_edges_from_messages(
+        self, messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Fallback: auto-extract file relationships from search results and code reads.
+
+        When the LLM never calls report_relationship, mine the conversation
+        history for file co-occurrence and import relationships.
+        """
+        # Collect all file paths seen in search results
+        search_files: list[str] = _extract_paths_from_search_results(messages)
+
+        # Collect all files the agent chose to read (strong relevance signal)
+        read_files: list[str] = []
+        for msg in messages:
+            for tc in msg.get("tool_calls", []):
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                if name in ("read_files_batch", "get_entity_content"):
+                    raw = fn.get("arguments", "{}")
+                    try:
+                        args = json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        continue
+                    if name == "read_files_batch":
+                        for fp in (args.get("file_paths") or []):
+                            if fp and fp not in read_files:
+                                read_files.append(str(fp))
+                    elif name == "get_entity_content":
+                        fp = args.get("file_path", "")
+                        if fp and fp not in read_files:
+                            read_files.append(str(fp))
+
+        # Extract import relationships from code that was read
+        edges: list[dict[str, Any]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        cwd = Path(os.getcwd())
+
+        for msg in messages:
+            if msg.get("role") != "tool":
+                continue
+            content = msg.get("content", "") or ""
+            if not content or len(content) < 20:
+                continue
+
+            # Find which file this tool result corresponds to
+            source_file = ""
+            for fp in read_files:
+                # Normalize for comparison
+                fp_norm = fp.replace("\\", "/")
+                if fp_norm in content or fp.replace("/", "\\") in content:
+                    source_file = fp_norm
+                    break
+
+            if not source_file:
+                continue
+
+            # Extract imports from the code
+            for mod in _extract_imports_from_text(content):
+                target = _resolve_module_to_path(mod, cwd)
+                if not target:
+                    continue
+                pair = (source_file, target)
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    edges.append({
+                        "from_file": source_file,
+                        "to_file": target,
+                        "kind": "import",
+                        "confidence": 0.9,
+                    })
+
+        # Co-occurrence: files that appear together in search results → semantic relationship
+        if len(search_files) >= 2:
+            top_search = search_files[:8]
+            for i, f1 in enumerate(top_search):
+                for f2 in top_search[i + 1:]:
+                    f1n = f1.replace("\\", "/")
+                    f2n = f2.replace("\\", "/")
+                    pair = (f1n, f2n)
+                    if pair not in seen_pairs:
+                        seen_pairs.add(pair)
+                        edges.append({
+                            "from_file": f1n,
+                            "to_file": f2n,
+                            "kind": "co_change",
+                            "confidence": 0.6,
+                        })
+
+        _log.info("Fallback edge extraction: %d edges from %d search files + %d read files",
+                  len(edges), len(search_files), len(read_files))
+        return edges
+
+    async def _run_analysis_loop(
+        self,
+        query: str,
+        max_iterations: int,
+        client: Any,
+    ) -> list[dict[str, Any]]:
+        """Run agent analysis loop focused on discovering relationships.
+
+        Returns list of discovered edge dicts.
+        """
+        self._discovered_edges = []  # Reset accumulator
+
+        tool_schemas = get_graph_enhanced_tool_schemas()
+        system_prompt = self._build_analysis_system_prompt()
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        cfg = self._config
+        for iteration in range(max_iterations):
+            is_last = iteration == max_iterations - 1
+            _log.info("Analysis agent iteration %d/%d", iteration + 1, max_iterations)
+
+            assistant_msg = await _call_openai_async(
+                client, cfg.agent_llm_model, messages, tool_schemas,
+            )
+            if assistant_msg is None:
+                _log.warning("Analysis LLM call failed at iteration %d", iteration + 1)
+                break
+
+            messages.append(assistant_msg)
+            tool_calls = assistant_msg.get("tool_calls") or []
+
+            if not tool_calls:
+                _log.info("Analysis agent stopped naturally, discovered %d edges", len(self._discovered_edges))
+                break
+
+            # Process tool calls
+            tool_results, _ = self._dispatch_tool_calls(
+                tool_calls, default_top_k=10,
+            )
+            messages.extend(tool_results)
+
+            # Inject hint to nudge LLM toward report_relationship
+            has_report = any(
+                (tc.get("function") or {}).get("name") == "report_relationship"
+                for tc in tool_calls
+            )
+            if not has_report and not is_last:
+                hint = (
+                    "[IMPORTANT] You have read code but not yet called `report_relationship`. "
+                    "For every file pair you discovered that are related (imports, calls, "
+                    "co-change), call `report_relationship` NOW. "
+                    "Do NOT just search — your primary job is to REPORT RELATIONSHIPS."
+                )
+                messages.append({"role": "user", "content": hint})
+
+        edges = list(self._discovered_edges)
+        self._discovered_edges = []  # Clean up
+
+        # Fallback: if LLM never called report_relationship, extract from history
+        if not edges:
+            _log.info("LLM reported 0 edges, running fallback extraction from conversation")
+            edges = self._extract_edges_from_messages(messages)
+
+        return edges
+
+    async def _run_graph_enhanced(
+        self, query: str, max_iterations: int, top_k: int,
+    ) -> list[FileSearchResult]:
+        """Graph-enhanced mode: Pipeline + Agent parallel, Agent enriches graph."""
+        cfg = self._config
+
+        client = self._get_async_client()
+        if client is None:
+            _log.warning("No async LLM client, falling back to pipeline search")
+            return self._search.search_files(query, top_k=top_k)
+
+        # Phase 1: Pipeline search + Agent analysis in parallel
+        pipeline_task = asyncio.to_thread(
+            self._search.search_files, query, top_k=top_k * 3,
+        )
+        agent_task = self._run_analysis_loop(query, max_iterations, client)
+
+        pipeline_results, agent_edges = await asyncio.gather(
+            pipeline_task, agent_task, return_exceptions=True,
+        )
+
+        # Handle errors
+        if isinstance(pipeline_results, Exception):
+            _log.warning("Pipeline search failed: %s", pipeline_results)
+            pipeline_results = []
+        if isinstance(agent_edges, Exception):
+            _log.warning("Agent analysis failed: %s", agent_edges)
+            agent_edges = []
+
+        if not agent_edges:
+            _log.info("Agent found no new edges, returning pipeline results directly")
+            return pipeline_results[:top_k]
+
+        # Phase 2: Inject agent-discovered edges into graph
+        injected = self._inject_edges_to_graph(agent_edges)
+        _log.info("Graph enhanced with %d new edges from agent", injected)
+
+        if injected == 0:
+            return pipeline_results[:top_k]
+
+        # Phase 3: Re-run pipeline search with enriched graph
+        enhanced_results = self._search.search_files(query, top_k=top_k)
+
+        _log.info(
+            "Graph-enhanced search: pipeline=%d initial, agent=%d edges, enhanced=%d final",
+            len(pipeline_results), injected, len(enhanced_results),
+        )
+
+        return enhanced_results
+
+    async def _run_hybrid(
+        self, query: str, max_iterations: int, top_k: int,
+    ) -> list[FileSearchResult]:
+        """Hybrid mode: full agent loop (iterative discovery) + graph enhancement + pipeline reranking.
+
+        Combines the best of agent mode (multi-round iterative file discovery)
+        with graph enhancement (agent reports relationships) and pipeline
+        reranking (proper scoring via reranker/FTS/fusion).
+
+        Flow:
+        1. Run full agent loop with graph-enhanced tools (includes report_relationship)
+        2. Collect agent-discovered files AND edges from conversation
+        3. Inject edges into entity graph
+        4. Merge agent-discovered files with pipeline search results
+        5. Use pipeline reranker for final scoring
+        """
+        cfg = self._config
+
+        client = self._get_async_client()
+        if client is None:
+            _log.warning("No async LLM client, falling back to pipeline search")
+            return self._search.search_files(query, top_k=top_k)
+
+        # Phase 1: Run the full agent loop with graph-enhanced tool schemas
+        # (same as _run_single but with report_relationship tool available)
+        self._discovered_edges = []
+        tool_schemas = get_graph_enhanced_tool_schemas()
+        system_prompt = self._build_system_prompt(top_k=top_k)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
+
+        for iteration in range(max_iterations):
+            is_last = iteration == max_iterations - 1
+            _log.info("Hybrid agent iteration %d/%d", iteration + 1, max_iterations)
+
+            assistant_msg = await _call_openai_async(
+                client, cfg.agent_llm_model, messages, tool_schemas,
+            )
+            if assistant_msg is None:
+                _log.warning("LLM call failed at iteration %d, falling back", iteration + 1)
+                break
+
+            messages.append(assistant_msg)
+            tool_calls = assistant_msg.get("tool_calls") or []
+
+            if not tool_calls:
+                _log.info("Hybrid agent stopped naturally: %s",
+                          (assistant_msg.get("content") or "")[:200])
+                break
+
+            tool_results, extracted_symbols = self._dispatch_tool_calls(
+                tool_calls, default_top_k=top_k,
+            )
+            messages.extend(tool_results)
+
+            if extracted_symbols:
+                unique = list(dict.fromkeys(extracted_symbols))[:15]
+                hint = (
+                    f"[Hint] Symbols found in the code you just read: {unique}. "
+                    "Consider searching for these exact names with search_code, "
+                    "and use list_related_files on the files you read."
+                )
+                messages.append({"role": "user", "content": hint})
+
+            if is_last:
+                _log.info("Hybrid agent reached max iterations")
+
+        # Phase 2: Collect agent-discovered files from conversation history
+        agent_files = _extract_paths_from_search_results(messages)
+        text_files = _extract_file_paths_from_messages(messages)
+        seen: set[str] = set()
+        agent_discovered: list[str] = []
+        for p in agent_files + text_files:
+            if p not in seen:
+                seen.add(p)
+                agent_discovered.append(p)
+
+        # Phase 3: Collect edges (explicit report_relationship + fallback extraction)
+        edges = list(self._discovered_edges)
+        self._discovered_edges = []
+        if not edges:
+            edges = self._extract_edges_from_messages(messages)
+
+        # Phase 4: Inject edges into entity graph
+        if edges:
+            injected = self._inject_edges_to_graph(edges)
+            _log.info("Hybrid: injected %d edges into graph", injected)
+
+        # Phase 5: Pipeline search (with enriched graph)
+        pipeline_results = self._search.search_files(query, top_k=max(top_k * 3, 30))
+        pipeline_by_path = {r.path: r for r in pipeline_results}
+
+        # Phase 6: Merge agent-discovered files with pipeline results
+        # Agent files preserve their discovery order (reflecting iterative refinement).
+        # Pipeline provides proper scores via reranker.
+        out: list[FileSearchResult] = []
+        used: set[str] = set()
+
+        for p in agent_discovered:
+            if len(out) >= top_k:
+                break
+            if p in used:
+                continue
+            used.add(p)
+            if p in pipeline_by_path:
+                out.append(pipeline_by_path[p])
+            else:
+                # Agent found a file pipeline missed — include with score 0
+                out.append(FileSearchResult(
+                    path=str(p), score=0.0, best_chunk_id=0,
+                    snippet="", line=0, end_line=0, content="", language="",
+                    chunk_ids=(),
+                ))
+
+        # Fill remaining slots from pipeline (sorted by score)
+        for r in pipeline_results:
+            if len(out) >= top_k:
+                break
+            if r.path not in used:
+                used.add(r.path)
+                out.append(r)
+
+        _log.info(
+            "Hybrid result: agent_discovered=%d, edges=%d, pipeline=%d, final=%d",
+            len(agent_discovered), len(edges), len(pipeline_results), len(out),
+        )
+        return out
 
     def _execute_tool_call(
         self, tc: dict[str, Any], default_top_k: int,
@@ -669,6 +1076,18 @@ class CodeLocAgent:
 
         if name == "list_related_files":
             return self._tool_list_related_files(args)
+
+        if name == "report_relationship":
+            from_file = str(args.get("from_file") or "")
+            to_file = str(args.get("to_file") or "")
+            kind = str(args.get("kind") or "semantic")
+            confidence = float(args.get("confidence", 0.8))
+            if from_file and to_file:
+                edge = {"from_file": from_file, "to_file": to_file, "kind": kind, "confidence": confidence}
+                self._discovered_edges.append(edge)
+                _log.info("Agent reported relationship: %s -[%s]-> %s (%.2f)", from_file, kind, to_file, confidence)
+                return json.dumps({"status": "recorded", "edge": edge})
+            return json.dumps({"error": "from_file and to_file are required"})
 
         return json.dumps({"error": f"unknown tool: {name}"})
 

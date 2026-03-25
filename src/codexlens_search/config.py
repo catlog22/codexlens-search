@@ -137,6 +137,7 @@ class Config:
     agent_parallel_tools_allowlist: tuple[str, ...] = ("read_files_batch", "get_entity_content")
     agent_fan_out_enabled: bool = False
     agent_fan_out_max_workers: int = 3
+    agent_mode: str = "agent"  # 'agent', 'graph_enhanced', or 'hybrid'
 
     _DEFAULT_EXCLUDE_EXTENSIONS: frozenset[str] = frozenset({
         # binaries / images

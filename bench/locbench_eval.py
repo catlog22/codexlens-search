@@ -99,6 +99,7 @@ def index_and_search(
     top_k: int = 20,
     agent: bool = False,
     file_level: bool = False,
+    agent_mode: str = "agent",
 ) -> list[dict]:
     """Index a repo with codexlens-search and run a search query.
 
@@ -145,6 +146,7 @@ def index_and_search(
     # Search / Agent locate
     if agent:
         config.agent_enabled = True
+        config.agent_mode = agent_mode
         entity_graph = getattr(search, "_entity_graph", None)
         loc_agent = create_agent(search, entity_graph, config)
 
@@ -446,6 +448,8 @@ def main():
                         help="Use SearchPipeline.search_files() for file-level aggregation")
     parser.add_argument("--agent", action="store_true",
                         help="Use LLM agent loop (requires optional deps + API key)")
+    parser.add_argument("--mode", choices=["agent", "graph_enhanced", "hybrid"], default="agent",
+                        help="Agent mode: 'agent', 'graph_enhanced', or 'hybrid'")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-processed instances")
     parser.add_argument("--eval-only", action="store_true",
@@ -459,7 +463,11 @@ def main():
         datefmt="%H:%M:%S",
     )
 
-    output_path = Path(args.output)
+    # Auto-suffix output filename with mode when using agent + non-default mode
+    output = args.output
+    if args.agent and args.mode != "agent" and output == "bench/locbench_results.jsonl":
+        output = f"bench/locbench_results_{args.mode}.jsonl"
+    output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Eval-only mode
@@ -524,6 +532,7 @@ def main():
                 top_k=args.top_k,
                 agent=args.agent,
                 file_level=args.file_level,
+                agent_mode=args.mode,
             )
         except Exception as e:
             log.error("  Index/search failed for %s: %s", instance_id, e)

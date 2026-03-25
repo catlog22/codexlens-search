@@ -616,12 +616,25 @@ class SearchPipeline:
         self._record_access(results)
         return results
 
-    def search_files(self, query: str, top_k: int = 10) -> list[FileSearchResult]:
+    def search_files(
+        self, query: str, top_k: int = 10, *, llm_expand: bool | None = None,
+    ) -> list[FileSearchResult]:
         """File-level search: aggregate chunk results by file path.
 
         Uses max-score aggregation per file and keeps a representative best chunk.
+
+        Args:
+            llm_expand: If True, use LLM to extract additional search terms
+                and run multiple queries merged via RRF. If None, uses
+                ``config.llm_expand_enabled``.
         """
-        # Pull more chunks than files to avoid duplicates collapsing recall.
+        use_llm = llm_expand if llm_expand is not None else self._config.llm_expand_enabled
+        if use_llm:
+            return self._search_files_llm_expand(query, top_k)
+        return self._search_files_basic(query, top_k)
+
+    def _search_files_basic(self, query: str, top_k: int) -> list[FileSearchResult]:
+        """Standard file search without LLM expansion."""
         chunk_k = max(top_k * 5, top_k)
         chunk_k = min(chunk_k, 200)
 
@@ -659,3 +672,54 @@ class SearchPipeline:
 
         file_results.sort(key=lambda x: x.score, reverse=True)
         return file_results[:top_k]
+
+    def _search_files_llm_expand(self, query: str, top_k: int) -> list[FileSearchResult]:
+        """File search with LLM query expansion + multi-query RRF fusion."""
+        import asyncio
+        from .llm_expand import (
+            llm_expand_query, build_expanded_queries, merge_file_results_rrf,
+            extract_graph_context,
+        )
+
+        # Quick initial search to seed graph context
+        graph_ctx = ""
+        if self._entity_graph is not None:
+            try:
+                seed_results = self._search_files_basic(query, top_k=5)
+                if seed_results:
+                    seed_paths = [r.path for r in seed_results]
+                    graph_ctx = extract_graph_context(seed_paths, self._entity_graph)
+                    if graph_ctx:
+                        _log.info("LLM expand: injecting %d graph edges", graph_ctx.count("\n") + 1)
+            except Exception:
+                _log.debug("Graph context extraction failed", exc_info=True)
+
+        # Get LLM-extracted terms (async call from sync context)
+        try:
+            extracted = asyncio.run(
+                llm_expand_query(query, self._config, graph_context=graph_ctx)
+            )
+        except Exception:
+            _log.warning("LLM expansion failed, falling back to basic search", exc_info=True)
+            return self._search_files_basic(query, top_k)
+
+        queries = build_expanded_queries(query, extracted)
+        _log.info("LLM expand: %d queries from extraction %s", len(queries), extracted)
+
+        # Run each query through basic search
+        ranked_lists: list[list[FileSearchResult]] = []
+        for q in queries:
+            try:
+                results = self._search_files_basic(q, top_k=top_k * 2)
+                if results:
+                    ranked_lists.append(results)
+            except Exception:
+                _log.warning("Sub-query search failed: %s", q[:100], exc_info=True)
+
+        if not ranked_lists:
+            return self._search_files_basic(query, top_k)
+
+        if len(ranked_lists) == 1:
+            return ranked_lists[0][:top_k]
+
+        return merge_file_results_rrf(ranked_lists, top_k=top_k)

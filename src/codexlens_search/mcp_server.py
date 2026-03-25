@@ -742,7 +742,7 @@ async def _search_regex(project_path: str, pattern: str, top_k: int, scope: str)
 
 
 # ---------------------------------------------------------------------------
-# Tool 2: locate — LLM agent code localization
+# Tool 2: locate — LLM-enhanced file search
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
@@ -750,25 +750,28 @@ async def locate(
     project_path: str,
     query: str,
     top_k: int = 10,
-    max_iterations: int = 5,
+    llm_expand: bool = True,
 ) -> str:
-    """LLM-driven code localization — find ALL files that need changes for a bug fix or feature.
+    """Find files relevant to a bug fix or feature request.
 
-    Uses an iterative agent loop: search → read → extract symbols → follow imports → discover dependencies.
-    Much more thorough than keyword search for multi-file changes.
+    Uses LLM-enhanced search by default: a single LLM call extracts key
+    symbols, concepts, and alternative queries from the issue description,
+    then runs multiple pipeline searches merged via reciprocal rank fusion.
 
-    Requires LLM API config via env vars:
-      - CODEXLENS_AGENT_LLM_API_KEY: API key (required)
-      - CODEXLENS_AGENT_LLM_MODEL: Model name (default: glm-5-turbo)
-      - CODEXLENS_AGENT_LLM_API_BASE: API base URL (default: https://open.bigmodel.cn/api/paas/v4/)
+    Set llm_expand=false for fast pure-pipeline search without LLM.
 
-    Falls back to plain semantic search if agent is not configured.
+    LLM config via env vars (or MCP config):
+      - CODEXLENS_LLM_EXPAND_API_KEY (or CODEXLENS_AGENT_LLM_API_KEY): API key
+      - CODEXLENS_LLM_EXPAND_MODEL (or CODEXLENS_AGENT_LLM_MODEL): Model name (default: glm-5-turbo)
+      - CODEXLENS_LLM_EXPAND_API_BASE (or CODEXLENS_AGENT_LLM_API_BASE): API base URL
+
+    Falls back to plain semantic search if LLM is not configured.
 
     Args:
         project_path: Absolute path to the project root.
         query: Natural language description of the bug or feature.
         top_k: Maximum number of files to return (default 10).
-        max_iterations: Maximum agent tool-call iterations (default 5).
+        llm_expand: Use LLM query expansion for better recall (default true).
     """
     root = Path(project_path).resolve()
     if not root.is_dir():
@@ -778,31 +781,16 @@ async def locate(
     if not (db_path / "metadata.db").exists():
         return (
             "Error: no index found. Run index_project first, then use locate.\n"
-            "The agent needs an indexed codebase to search through."
+            "Index the project first, then search."
         )
-
-    from codexlens_search.bridge import create_agent
 
     _, search, config = _get_pipelines(project_path)
 
-    config.agent_enabled = True
-    entity_graph = getattr(search, "_entity_graph", None)
-
     try:
-        agent = create_agent(search, entity_graph, config)
+        results = search.search_files(query, top_k=top_k, llm_expand=llm_expand)
     except Exception as exc:
-        log.warning("Failed to create agent: %s", exc)
-        return f"Error: failed to create agent: {exc}"
-
-    old_cwd = os.getcwd()
-    try:
-        os.chdir(root)
-        results = await agent.run(query, max_iterations=max_iterations, top_k=top_k)
-    except Exception as exc:
-        log.error("Agent run failed: %s", exc, exc_info=True)
-        return f"Error: agent run failed: {exc}"
-    finally:
-        os.chdir(old_cwd)
+        log.error("Search failed: %s", exc, exc_info=True)
+        return f"Error: search failed: {exc}"
 
     if not results:
         return "No relevant files found."
@@ -813,7 +801,8 @@ async def locate(
         loc = f" L{r.line}-{r.end_line}" if r.line and r.end_line else ""
         lines.append(f"{i}. **{r.path}**{loc}{score_str}")
 
-    header = f"Found {len(results)} file(s) relevant to: *{query[:100]}*\n"
+    mode = "LLM-enhanced" if llm_expand else "pipeline"
+    header = f"Found {len(results)} file(s) ({mode} search) for: *{query[:100]}*\n"
     return header + "\n".join(lines)
 
 

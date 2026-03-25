@@ -127,7 +127,13 @@ class Config:
     entity_graph_depth: int = 2
     entity_graph_backend: str = "auto"
 
-    # LLM Agent loop (optional)
+    # LLM query expansion (single LLM call to enhance pipeline search)
+    llm_expand_enabled: bool = False
+    llm_expand_model: str = "glm-5-turbo"
+    llm_expand_api_key: str = ""
+    llm_expand_api_base: str = "https://open.bigmodel.cn/api/paas/v4/"
+
+    # LLM Agent loop (internal/experimental — hidden from public API)
     agent_enabled: bool = False
     agent_llm_model: str = "glm-5-turbo"
     agent_llm_api_key: str = ""
@@ -137,7 +143,7 @@ class Config:
     agent_parallel_tools_allowlist: tuple[str, ...] = ("read_files_batch", "get_entity_content")
     agent_fan_out_enabled: bool = False
     agent_fan_out_max_workers: int = 3
-    agent_mode: str = "agent"  # 'agent', 'graph_enhanced', 'hybrid', or 'llm_expand'
+    agent_mode: str = "agent"  # internal: 'agent', 'graph_enhanced', 'hybrid', 'llm_expand'
 
     _DEFAULT_EXCLUDE_EXTENSIONS: frozenset[str] = frozenset({
         # binaries / images

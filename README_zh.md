@@ -33,6 +33,28 @@ pip install codexlens-search[all]
 
 完成。Claude Code 会自动发现工具：`index_project` -> `Search` -> `locate`。
 
+启用 LLM 增强搜索（`locate`），添加 LLM API 配置：
+
+```json
+{
+  "mcpServers": {
+    "codexlens": {
+      "command": "uvx",
+      "args": ["--from", "codexlens-search[all]", "codexlens-mcp"],
+      "env": {
+        "CODEXLENS_EMBED_API_URL": "https://api.openai.com/v1",
+        "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
+        "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
+        "CODEXLENS_EMBED_DIM": "1536",
+        "CODEXLENS_LLM_EXPAND_API_KEY": "${GLM_API_KEY}",
+        "CODEXLENS_LLM_EXPAND_MODEL": "glm-5-turbo",
+        "CODEXLENS_LLM_EXPAND_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
+      }
+    }
+  }
+}
+```
+
 ## 安装
 
 选择匹配平台的安装方式：
@@ -126,11 +148,13 @@ CODEXLENS_ANN_BACKEND=auto     # 自动选择（usearch > faiss > hnswlib）
 
 ### locate
 
-LLM 驱动的代码定位 — 找到修复 Bug 或实现特性所需的**全部**文件。
+LLM 增强的代码定位 — 找到与 Bug 修复或特性实现相关的文件。
 
-使用迭代 Agent 循环：搜索 → 读文件 → 提取符号 → 跟踪 import → 发现依赖。对于多文件变更场景，比关键词搜索更全面。
+通过单次 LLM 调用将查询扩展为符号、技术概念和替代搜索查询，然后运行多路管线搜索，最终通过倒数排名融合（RRF）合并结果。在 ~10s 延迟内达到与迭代 Agent 方法相当的召回率（Agent 需 ~60s）。
 
-参数：`project_path`、`query`、`top_k`（默认 10）、`max_iterations`（默认 5）
+参数：`project_path`、`query`、`top_k`（默认 10）、`llm_expand`（默认 `true`）
+
+设置 `llm_expand=false` 使用不带 LLM 的纯管线搜索。
 
 需要 LLM API 配置（支持任何 OpenAI 兼容 API — GLM/智谱、DeepSeek、通义千问、OpenAI 等）：
 
@@ -145,24 +169,23 @@ LLM 驱动的代码定位 — 找到修复 Bug 或实现特性所需的**全部*
         "CODEXLENS_EMBED_API_KEY": "${OPENAI_API_KEY}",
         "CODEXLENS_EMBED_API_MODEL": "text-embedding-3-small",
         "CODEXLENS_EMBED_DIM": "1536",
-        "CODEXLENS_AGENT_LLM_API_KEY": "${GLM_API_KEY}",
-        "CODEXLENS_AGENT_LLM_MODEL": "glm-5-turbo",
-        "CODEXLENS_AGENT_LLM_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
+        "CODEXLENS_LLM_EXPAND_API_KEY": "${GLM_API_KEY}",
+        "CODEXLENS_LLM_EXPAND_MODEL": "glm-5-turbo",
+        "CODEXLENS_LLM_EXPAND_API_BASE": "https://open.bigmodel.cn/api/paas/v4/"
       }
     }
   }
 }
 ```
 
-未配置 LLM API Key 时自动降级为普通语义搜索。
+未配置 LLM API Key 时自动降级为纯管线搜索。
 
 #### 工作流程
 
-1. **初始搜索** — 从查询中提取关键词搜索代码库
-2. **阅读文件** — 读取 Top 3-5 文件，理解代码结构
-3. **符号提取** — 识别函数/类名，用精确符号名进行二次搜索
-4. **依赖发现** — 跟踪 import 关系和实体图边，发现关联文件
-5. **Import 感知扩展** — 自动解析 top 文件的项目内 import，将结构相关文件交织插入结果（即使与查询无关键词重叠）
+1. **LLM 查询扩展** — 单次 LLM 调用从问题描述中提取符号名、技术概念、错误信息和替代搜索查询
+2. **多路搜索** — 将原始查询和扩展查询分别通过混合管线（向量 + FTS + 图 + 正则）
+3. **RRF 融合** — 通过倒数排名融合合并所有结果列表，获得稳健排名
+4. **重排序** — 应用交叉编码器重排序（如已配置）得到最终 top-k
 
 ### index_project
 
@@ -429,14 +452,16 @@ codexlens-search delete-model BAAI/bge-small-en-v1.5
 | `CODEXLENS_RERANKER_API_KEY` | API 密钥 |
 | `CODEXLENS_RERANKER_API_MODEL` | 模型名 |
 
-### LLM Agent（locate 工具）
+### LLM 查询扩展（locate 工具）
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CODEXLENS_AGENT_LLM_API_KEY` | | LLM API 密钥（locate 必需） |
-| `CODEXLENS_AGENT_LLM_MODEL` | `glm-5-turbo` | 模型名（任何 OpenAI 兼容 API） |
-| `CODEXLENS_AGENT_LLM_API_BASE` | `https://open.bigmodel.cn/api/paas/v4/` | API 基础 URL |
-| `CODEXLENS_AGENT_MAX_ITERATIONS` | `5` | Agent 最大工具调用迭代次数 |
+| `CODEXLENS_LLM_EXPAND_ENABLED` | `false` | 全局启用 LLM 扩展用于 `search_files` |
+| `CODEXLENS_LLM_EXPAND_API_KEY` | | API 密钥（任何 OpenAI 兼容 LLM） |
+| `CODEXLENS_LLM_EXPAND_MODEL` | `glm-5-turbo` | 模型名 |
+| `CODEXLENS_LLM_EXPAND_API_BASE` | `https://open.bigmodel.cn/api/paas/v4/` | API 基础 URL |
+
+> **向后兼容**：如果 `CODEXLENS_LLM_EXPAND_*` 变量未设置，系统也会检查 `CODEXLENS_AGENT_LLM_*` 变量。
 
 ### 功能开关
 

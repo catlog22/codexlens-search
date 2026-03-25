@@ -166,7 +166,23 @@ def create_config_from_env(db_path: str | Path, **overrides: object) -> "Config"
     # Entity graph expansion
     if os.environ.get("CODEXLENS_ENTITY_GRAPH_ENABLED"):
         kwargs["entity_graph_enabled"] = os.environ["CODEXLENS_ENTITY_GRAPH_ENABLED"].lower() in ("true", "1", "yes")
-    # Agent loop (LLM)
+    # LLM query expansion
+    if os.environ.get("CODEXLENS_LLM_EXPAND_ENABLED"):
+        kwargs["llm_expand_enabled"] = os.environ["CODEXLENS_LLM_EXPAND_ENABLED"].lower() in ("true", "1", "yes")
+    if os.environ.get("CODEXLENS_LLM_EXPAND_MODEL"):
+        kwargs["llm_expand_model"] = os.environ["CODEXLENS_LLM_EXPAND_MODEL"]
+    if os.environ.get("CODEXLENS_LLM_EXPAND_API_KEY"):
+        kwargs["llm_expand_api_key"] = os.environ["CODEXLENS_LLM_EXPAND_API_KEY"]
+    if os.environ.get("CODEXLENS_LLM_EXPAND_API_BASE"):
+        kwargs["llm_expand_api_base"] = os.environ["CODEXLENS_LLM_EXPAND_API_BASE"]
+    # Also accept CODEXLENS_AGENT_LLM_* as fallback for llm_expand
+    if not kwargs.get("llm_expand_api_key") and os.environ.get("CODEXLENS_AGENT_LLM_API_KEY"):
+        kwargs["llm_expand_api_key"] = os.environ["CODEXLENS_AGENT_LLM_API_KEY"]
+    if not kwargs.get("llm_expand_api_base") and os.environ.get("CODEXLENS_AGENT_LLM_API_BASE"):
+        kwargs["llm_expand_api_base"] = os.environ["CODEXLENS_AGENT_LLM_API_BASE"]
+    if not kwargs.get("llm_expand_model") and os.environ.get("CODEXLENS_AGENT_LLM_MODEL"):
+        kwargs["llm_expand_model"] = os.environ["CODEXLENS_AGENT_LLM_MODEL"]
+    # Agent loop (LLM) — internal/experimental
     if os.environ.get("CODEXLENS_AGENT_ENABLED"):
         kwargs["agent_enabled"] = os.environ["CODEXLENS_AGENT_ENABLED"].lower() in ("true", "1", "yes")
     if os.environ.get("CODEXLENS_AGENT_LLM_MODEL"):
@@ -448,7 +464,8 @@ def cmd_search_files(args: argparse.Namespace) -> None:
     """Run search query, output JSON array of file-level aggregated results."""
     _, search, _ = _create_pipeline(args)
 
-    results = search.search_files(args.query, top_k=args.top_k)
+    llm_expand = getattr(args, "llm_expand", False) or False
+    results = search.search_files(args.query, top_k=args.top_k, llm_expand=llm_expand)
     _json_output([
         {
             "path": r.path,
@@ -868,6 +885,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search_files = sub.add_parser("search-files", help="Search the index (file-level aggregation)")
     p_search_files.add_argument("--query", "-q", required=True, help="Search query")
     p_search_files.add_argument("--top-k", "-k", type=int, default=10, help="Number of files")
+    p_search_files.add_argument(
+        "--llm-expand", action="store_true",
+        help="Use LLM to expand query (extracts symbols/concepts, runs multi-query RRF fusion)",
+    )
 
     # locate (LLM agent loop)
     p_locate = sub.add_parser("locate", help="Locate code with LLM agent loop")

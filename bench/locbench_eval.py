@@ -100,6 +100,7 @@ def index_and_search(
     agent: bool = False,
     file_level: bool = False,
     agent_mode: str = "agent",
+    llm_expand: bool = False,
 ) -> list[dict]:
     """Index a repo with codexlens-search and run a search query.
 
@@ -172,8 +173,8 @@ def index_and_search(
         ]
 
     # Search
-    if file_level:
-        results = search.search_files(query, top_k=top_k)
+    if file_level or llm_expand:
+        results = search.search_files(query, top_k=top_k, llm_expand=llm_expand if llm_expand else None)
         return [
             {
                 "path": r.path,
@@ -450,6 +451,8 @@ def main():
                         help="Use LLM agent loop (requires optional deps + API key)")
     parser.add_argument("--mode", choices=["agent", "graph_enhanced", "hybrid", "llm_expand"], default="agent",
                         help="Agent mode: 'agent', 'graph_enhanced', 'hybrid', or 'llm_expand'")
+    parser.add_argument("--llm-expand", action="store_true",
+                        help="Use pipeline search_files with LLM query expansion (no agent)")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-processed instances")
     parser.add_argument("--eval-only", action="store_true",
@@ -465,7 +468,9 @@ def main():
 
     # Auto-suffix output filename with mode when using agent + non-default mode
     output = args.output
-    if args.agent and args.mode != "agent" and output == "bench/locbench_results.jsonl":
+    if args.llm_expand and output == "bench/locbench_results.jsonl":
+        output = "bench/locbench_results_llm_expand_graph.jsonl"
+    elif args.agent and args.mode != "agent" and output == "bench/locbench_results.jsonl":
         output = f"bench/locbench_results_{args.mode}.jsonl"
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -533,6 +538,7 @@ def main():
                 agent=args.agent,
                 file_level=args.file_level,
                 agent_mode=args.mode,
+                llm_expand=args.llm_expand,
             )
         except Exception as e:
             log.error("  Index/search failed for %s: %s", instance_id, e)

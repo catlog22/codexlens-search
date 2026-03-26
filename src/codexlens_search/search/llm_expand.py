@@ -18,27 +18,60 @@ from ..config import Config
 
 _log = logging.getLogger(__name__)
 
-_EXTRACT_PROMPT = (
-    "You are a code search query optimizer. Given a bug report or feature request, "
-    "extract the most important search terms for finding relevant source files.\n\n"
-    "Output a JSON object with these fields:\n"
-    "- `symbols`: list of specific function/class/variable names mentioned or implied\n"
-    "- `concepts`: list of 2-4 word technical concept phrases\n"
-    "- `error_terms`: any error messages, exception names, or diagnostic strings\n"
-    "- `sub_queries`: 2-3 alternative search queries that approach the problem "
-    "from different angles\n\n"
-    "Be specific. Extract EXACT symbol names from the text. "
-    "For sub_queries, think about what code structures would need to change.\n"
-    "Output ONLY valid JSON, no markdown."
-)
+_SYSTEM_PROMPT = """\
+# Role
+Code search query optimizer.
 
-_GRAPH_CONTEXT_ADDENDUM = (
-    "\n\nThe following file dependency graph shows relationships between "
-    "files found in an initial search. Use these relationships to generate "
-    "better sub_queries that target connected files (importers, callees, "
-    "base classes). Include symbol names from graph edges in your symbols list.\n\n"
-    "Graph relationships:\n{graph_info}"
-)
+# Task
+Extract search terms from a bug report / feature request to find relevant source files.
+
+# Output Schema
+```json
+{
+  "symbols": ["exact_function_name", "ClassName", "variable_name"],
+  "concepts": ["2-4 word technical phrase", "another concept"],
+  "error_terms": ["ErrorType", "error message substring"],
+  "sub_queries": ["alternative search angle 1", "alternative search angle 2"]
+}
+```
+
+# Rules
+1. `symbols`: Extract EXACT names from the text. Include class names, function names, variable names, module names.
+2. `concepts`: Technical phrases describing the problem domain (2-4 words each, max 4).
+3. `error_terms`: Error messages, exception names, log strings mentioned in the report.
+4. `sub_queries`: 2-3 queries approaching the problem from DIFFERENT angles — think about what code would need to change:
+   - One query targeting the implementation (function/class that needs fixing)
+   - One query targeting the caller/consumer of the broken code
+   - One query targeting related tests or configuration
+
+# Example
+Input: "The `validate_token` function in auth module raises TypeError when token is None"
+Output:
+```json
+{
+  "symbols": ["validate_token", "auth"],
+  "concepts": ["token validation", "null token handling"],
+  "error_terms": ["TypeError"],
+  "sub_queries": ["def validate_token None check", "token authentication middleware", "test validate_token edge cases"]
+}
+```
+
+# Output
+Reply with ONLY the JSON object. No markdown fences, no explanation."""
+
+_USER_TEMPLATE = """\
+# Issue Description
+{query}"""
+
+_USER_TEMPLATE_WITH_GRAPH = """\
+# Issue Description
+{query}
+
+# Related File Dependencies
+```
+{graph_info}
+```
+Target files connected by import/call/inherit edges in your sub_queries."""
 
 
 def _create_client(config: Config) -> Any:
@@ -86,28 +119,83 @@ async def llm_expand_query(
         return {}
 
     model = config.llm_expand_model or config.agent_llm_model or "glm-5-turbo"
-    system_prompt = _EXTRACT_PROMPT
+
     if graph_context:
-        system_prompt += _GRAPH_CONTEXT_ADDENDUM.format(graph_info=graph_context)
+        user_content = _USER_TEMPLATE_WITH_GRAPH.format(
+            query=query, graph_info=graph_context,
+        )
+    else:
+        user_content = _USER_TEMPLATE.format(query=query)
+
     messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
     ]
 
     try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            timeout=30,
-        )
+        # Try structured JSON mode first (OpenAI, GLM, DeepSeek support this)
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "timeout": 30,
+        }
+        try:
+            create_kwargs["response_format"] = {"type": "json_object"}
+            resp = await client.chat.completions.create(**create_kwargs)
+        except Exception:
+            # Fallback: some providers don't support response_format
+            _log.debug("response_format not supported, retrying without")
+            del create_kwargs["response_format"]
+            resp = await client.chat.completions.create(**create_kwargs)
+
         raw = (resp.choices[0].message.content or "").strip()
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group())
+        return _parse_json_response(raw)
     except Exception:
         _log.warning("LLM expansion call failed", exc_info=True)
 
     return {}
+
+
+def _parse_json_response(raw: str) -> dict[str, list[str]]:
+    """Parse LLM response into structured extraction dict.
+
+    Tries direct JSON parse first, then regex extraction as fallback.
+    Validates and normalizes field types.
+    """
+    # Try direct parse (works when response_format=json_object is used)
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return _normalize_extraction(data)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Fallback: extract JSON object from mixed text
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group())
+            if isinstance(data, dict):
+                return _normalize_extraction(data)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    _log.warning("Failed to parse JSON from LLM response: %s", raw[:200])
+    return {}
+
+
+def _normalize_extraction(data: dict) -> dict[str, list[str]]:
+    """Ensure all expected fields exist and have list[str] type."""
+    result: dict[str, list[str]] = {}
+    for key in ("symbols", "concepts", "error_terms", "sub_queries"):
+        val = data.get(key, [])
+        if isinstance(val, list):
+            result[key] = [str(v) for v in val if v]
+        elif isinstance(val, str):
+            result[key] = [val] if val else []
+        else:
+            result[key] = []
+    return result
 
 
 def build_expanded_queries(

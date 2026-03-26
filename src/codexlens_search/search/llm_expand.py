@@ -67,11 +67,11 @@ _USER_TEMPLATE_WITH_GRAPH = """\
 # Issue Description
 {query}
 
-# Related File Dependencies
-```
-{graph_info}
-```
-Target files connected by import/call/inherit edges in your sub_queries."""
+# Code Dependency Graph
+Files from initial search and their dependencies (import/call/inherit edges).
+Add connected symbols to `symbols`. Target connected files in `sub_queries`.
+
+{graph_info}"""
 
 
 def _create_client(config: Config) -> Any:
@@ -234,12 +234,9 @@ def extract_graph_context(
     entity_graph: Any,
     *,
     max_neighbors: int = 5,
-    max_lines: int = 30,
+    max_edges: int = 20,
 ) -> str:
-    """Extract entity graph relationships for a set of file paths.
-
-    Queries the entity graph for edges involving the given files and formats
-    them as human-readable lines for inclusion in the LLM prompt.
+    """Extract entity graph relationships as structured text for LLM prompt.
 
     Returns empty string if no graph info is available.
     """
@@ -253,33 +250,42 @@ def extract_graph_context(
     except Exception:
         return ""
 
-    lines: list[str] = []
-    seen_edges: set[tuple[str, str, str]] = set()
+    # Collect edges grouped by source file
+    file_edges: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    total = 0
 
-    for path in file_paths[:10]:
+    for path in file_paths[:8]:
         file_ent = _entity_for_file(path)
         neighbors = entity_graph._neighbors(file_ent)
+        edges: list[str] = []
         for neighbor_ent, weight in neighbors[:max_neighbors]:
-            edge_key = (path, neighbor_ent.file_path, neighbor_ent.symbol_name)
-            if edge_key in seen_edges:
+            target = neighbor_ent.file_path
+            key = (path, f"{target}:{neighbor_ent.symbol_name}")
+            if key in seen or target == path:
                 continue
-            seen_edges.add(edge_key)
+            seen.add(key)
 
             if neighbor_ent.symbol_name:
-                lines.append(
-                    f"- {path} -> {neighbor_ent.file_path}::{neighbor_ent.symbol_name} "
-                    f"({neighbor_ent.kind.value}, weight={weight:.1f})"
-                )
+                edges.append(f"  {neighbor_ent.kind.value}: {target} :: {neighbor_ent.symbol_name}")
             else:
-                lines.append(
-                    f"- {path} -> {neighbor_ent.file_path} (weight={weight:.1f})"
-                )
-            if len(lines) >= max_lines:
+                edges.append(f"  file: {target}")
+            total += 1
+            if total >= max_edges:
                 break
-        if len(lines) >= max_lines:
+        if edges:
+            file_edges[path] = edges
+        if total >= max_edges:
             break
 
-    return "\n".join(lines)
+    if not file_edges:
+        return ""
+
+    sections: list[str] = []
+    for path, edges in file_edges.items():
+        sections.append(f"[{path}]\n" + "\n".join(edges))
+
+    return "\n".join(sections)
 
 
 def merge_file_results_rrf(
